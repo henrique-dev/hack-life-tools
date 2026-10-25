@@ -1,5 +1,6 @@
-import { BrowserWindow, dialog, shell, type BrowserWindowConstructorOptions } from "electron";
+import { BrowserWindow, dialog, shell, type BrowserWindowConstructorOptions, type FileFilter } from "electron";
 import { join } from "node:path";
+import { mediaUrl } from "./lib/media";
 
 export const preloadPath = join(__dirname, "../preload/index.js");
 
@@ -26,10 +27,26 @@ export class Host {
     return result.canceled ? null : result.filePaths[0];
   }
 
+  /** Show a file picker and return the chosen path, or null if cancelled. */
+  async pickFile(filters: FileFilter[], defaultPath?: string): Promise<string | null> {
+    const result = await dialog.showOpenDialog(this.mainWindow, { defaultPath, filters, properties: ["openFile"] });
+    return result.canceled ? null : result.filePaths[0];
+  }
+
+  /** URL the UI can use to play a local file (see lib/media.ts). */
+  mediaUrl(path: string) {
+    return mediaUrl(path);
+  }
+
   /** Open a file or folder with the system's default application. */
   async openPath(path: string) {
     const error = await shell.openPath(path);
     if (error) throw new Error(error);
+  }
+
+  /** Open the folder containing a file, with the file selected. */
+  showInFolder(path: string) {
+    shell.showItemInFolder(path);
   }
 
   /**

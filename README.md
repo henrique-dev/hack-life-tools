@@ -83,6 +83,42 @@ Notes:
 - With "Show the phone screen" enabled, the phone can also be controlled from that window; closing it
   stops the recording.
 
+### Video Downloader
+
+Downloads videos, or just their audio, from YouTube and
+[thousands of other sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md), using
+[yt-dlp](https://github.com/yt-dlp/yt-dlp).
+
+- Paste a URL and click **Check** to see the title, length and thumbnail, then choose:
+  - **Video**: best quality, 1080p, 720p or 480p, saved as MP4, optionally with subtitles.
+  - **Audio only**: MP3 or M4A.
+- Playlists can be downloaded whole, into a folder named after the playlist.
+- Downloads run one at a time from a queue and can be canceled.
+- The first time, the tool downloads yt-dlp from its official GitHub releases, verifies it against the
+  published SHA-256 checksum and keeps it in the app's data folder. Sites change often: if a download
+  that used to work fails, click **Update** at the bottom of the tool.
+- YouTube needs a JavaScript runtime; the tool passes the Node.js used to run the app.
+
+Only download content you have the right to save. DRM-protected services (Netflix, Spotify, ...) are not
+supported.
+
+### Video Editor
+
+Edits a video or audio file with ffmpeg. The original is never changed: the result is saved as a new file
+(`name_edited.mp4`, `name.mp3`, ...) next to it or in a folder you choose.
+
+- **Open** a file with the button or by dropping it on the window. A player previews it.
+- **Trim**: set the start and end, typing a time or using the player's current position.
+- **Output**:
+  - **Video**, optionally without its audio.
+  - **Audio only** (removes the video): MP3 or M4A.
+- **Compress** the video to make it smaller:
+  - **None**: copies the streams without re-encoding. Instant and lossless, but cuts snap to the nearest
+    keyframe, so they may be off by a few seconds.
+  - **Light / Medium / Strong**: re-encodes to H.264 with increasing compression.
+  - **Target size**: aims for a size in MB (e.g. to fit an upload limit), in two passes.
+  - **Resolution**: optionally reduce it to 1080p, 720p or 480p.
+
 ### iPhone / iPad
 
 There is no tool for iOS: Apple offers nothing like scrcpy for recording from a computer. Options:
@@ -103,11 +139,14 @@ src/
   main/                         Electron main process
     index.ts                    main window, IPC
     host.ts                     services for tools: extra windows, folder picker, events
-    lib/                        shared helpers (ffmpeg remux, recording status, utils)
+    lib/                        shared helpers (ffmpeg remux, media:// protocol for local
+                                previews, processes, recording status, utils)
     tools/
       types.ts                  Tool interface
       screen_recorder/          recording control, file writing
       android_recorder/         scrcpy detection, devices, recording
+      video_downloader/         yt-dlp install/update, download queue
+      video_editor/             file probing, ffmpeg export
   preload/index.ts              exposes window.api to the UI
   renderer/                     React + Tailwind UI
     src/api.ts                  callTool(), onToolEvent()
@@ -118,6 +157,10 @@ src/
       windows/overlay.tsx       floating timer with stop button
       windows/recorder.tsx      hidden window that does the capture
     src/tools/android_recorder/
+      index.tsx                 main screen
+    src/tools/video_downloader/
+      index.tsx                 main screen
+    src/tools/video_editor/
       index.tsx                 main screen
 ```
 

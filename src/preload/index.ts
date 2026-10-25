@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 
 type ToolEventListener = (toolId: string, event: string, payload: unknown) => void;
 
@@ -12,4 +12,6 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("tool:event", handler);
     return () => ipcRenderer.removeListener("tool:event", handler);
   },
+  // Path of a file dropped on the page or chosen in an <input type="file">.
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
 });

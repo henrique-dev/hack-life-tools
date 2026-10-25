@@ -1,8 +1,11 @@
 import type { ReactNode } from "react";
 
-export const inputClass =
-  "w-80 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm disabled:opacity-50 " +
+/** Input style without a width, for inputs that need their own. */
+export const inputBaseClass =
+  "rounded-md border border-gray-300 bg-white px-3 py-2 text-sm disabled:opacity-50 " +
   "dark:border-gray-700 dark:bg-gray-900";
+
+export const inputClass = `${inputBaseClass} w-80`;
 
 export const secondaryButtonClass =
   "rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 " +

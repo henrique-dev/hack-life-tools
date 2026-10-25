@@ -10,6 +10,7 @@ interface Bridge {
   listTools(): Promise<ToolInfo[]>;
   callTool(toolId: string, method: string, args: unknown[]): Promise<unknown>;
   onToolEvent(listener: (toolId: string, event: string, payload: unknown) => void): () => void;
+  getPathForFile(file: File): string;
 }
 
 declare global {
@@ -33,6 +34,11 @@ export function onToolEvent(toolId: string, event: string, listener: (payload: u
   return window.api.onToolEvent((fromTool, name, payload) => {
     if (fromTool === toolId && name === event) listener(payload);
   });
+}
+
+/** Full path of a file dropped on the page. */
+export function getPathForFile(file: File) {
+  return window.api.getPathForFile(file);
 }
 
 export function errorMessage(err: unknown) {

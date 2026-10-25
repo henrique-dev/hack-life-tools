@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { Host, loadRoute, preloadPath } from "./host";
+import { handleMediaProtocol, registerMediaScheme } from "./lib/media";
 import { tools } from "./tools";
 import type { ToolApi } from "./tools/types";
 
@@ -7,6 +8,8 @@ import type { ToolApi } from "./tools/types";
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 }
+
+registerMediaScheme();
 
 let host: Host;
 const apis = new Map<string, ToolApi>();
@@ -62,5 +65,8 @@ function createMainWindow() {
   });
 }
 
-app.whenReady().then(createMainWindow);
+app.whenReady().then(() => {
+  handleMediaProtocol();
+  createMainWindow();
+});
 app.on("window-all-closed", () => app.quit());

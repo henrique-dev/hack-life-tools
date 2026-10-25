@@ -1,10 +1,11 @@
 import { app } from "electron";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Host } from "../../host";
 import { remux } from "../../lib/ffmpeg";
+import { run, which } from "../../lib/process";
 import { idleStatus, type RecordingStatus } from "../../lib/recording";
 import { sleep, timestamp, withTimeout } from "../../lib/util";
 import type { Tool, ToolApi } from "../types";
@@ -67,37 +68,6 @@ interface Recording {
   exited: Promise<number | null>;
   finished: PromiseWithResolvers<void>;
   stopping: boolean;
-}
-
-// Folders where package managers put commands, in case they are missing from
-// the PATH this app inherited (e.g. a terminal opened before installing).
-function extraSearchDirs() {
-  if (process.platform === "win32") return [join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet", "Links")];
-  if (process.platform === "darwin") return ["/opt/homebrew/bin", "/usr/local/bin"];
-  return ["/snap/bin", "/usr/local/bin"];
-}
-
-function which(command: string): string | null {
-  const extensions = process.platform === "win32" ? [".exe", ".cmd", ".bat"] : [""];
-  const dirs = [...(process.env.PATH ?? "").split(delimiter), ...extraSearchDirs()];
-  for (const dir of dirs) {
-    if (!dir) continue;
-    for (const extension of extensions) {
-      const candidate = join(dir, command + extension);
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return null;
-}
-
-function run(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: 15_000, windowsHide: true }, (err, stdout, stderr) => {
-      // scrcpy --version can exit with a non-zero code; its output is still valid.
-      if (err && !stdout) reject(new Error(stderr.trim() || err.message));
-      else resolve(stdout);
-    });
-  });
 }
 
 function isOlder(version: string, minimum: number[]) {
