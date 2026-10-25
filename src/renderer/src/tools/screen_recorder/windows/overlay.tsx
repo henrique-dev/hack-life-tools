@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { call, formatSeconds, useElapsed, useStatus } from "../shared";
+import { formatSeconds, useElapsed, useRecordingStatus } from "../../../components/recording";
+import { call, TOOL_ID } from "../shared";
 
 // Floating always-on-top window shown while recording. The main process
 // closes it when the recording ends, however it ends.
 export default function RecordingOverlay() {
-  const [status] = useStatus();
+  const [status] = useRecordingStatus(TOOL_ID);
   const elapsed = useElapsed(status);
   const [stopping, setStopping] = useState(false);
 

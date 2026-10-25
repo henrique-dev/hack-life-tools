@@ -36,6 +36,8 @@ window is minimized and a floating timer with a stop button is shown.
   chosen FPS is a maximum. Most players handle this; some video editors prefer converting to a constant
   frame rate first.
 - The recording ends by itself when the recorded window is closed.
+- Minimized windows are not listed, because Chromium cannot capture them. Restore the window and click
+  Refresh.
 
 Platform notes:
 
@@ -52,6 +54,48 @@ Platform notes:
   the Electron sandbox (e.g. Ubuntu 24.04). Run
   `sudo chown root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox`.
 
+### Android Recorder
+
+Records the screen of an Android phone connected by USB, optionally with the phone's audio, using
+[scrcpy](https://github.com/Genymobile/scrcpy). Nothing is installed on the phone.
+
+Setup, once:
+
+1. Install scrcpy 2.3 or newer. The app shows the right command if it is missing:
+
+   | Platform | Command |
+   | --- | --- |
+   | Windows | `winget install --exact Genymobile.scrcpy` |
+   | macOS | `brew install scrcpy android-platform-tools` |
+   | Linux | `sudo snap install scrcpy` (distribution packages are often too old) |
+
+2. On the phone, enable USB debugging: Settings > About phone > tap "Build number" 7 times, then
+   Settings > System > Developer options > USB debugging.
+3. Connect the phone with a USB cable that carries data (some cables only charge), unlock it and accept
+   the "Allow USB debugging?" prompt.
+
+Notes:
+
+- Phone audio requires Android 11 or newer; on older versions only the video is recorded.
+- Apps that block screen capture (banking, streaming) appear black.
+- scrcpy records to MKV, which stays valid even if recording is interrupted, and the file is then
+  converted to MP4 without re-encoding.
+- With "Show the phone screen" enabled, the phone can also be controlled from that window; closing it
+  stops the recording.
+
+### iPhone / iPad
+
+There is no tool for iOS: Apple offers nothing like scrcpy for recording from a computer. Options:
+
+- **On the device:** the built-in Screen Recording in Control Center (add it in Settings > Control
+  Center if missing), then transfer the video with AirDrop or a cable. Works everywhere.
+- **macOS:** QuickTime Player > File > New Movie Recording, then pick the iPhone as camera and
+  microphone (cable required). On macOS 15 with iOS 18, iPhone Mirroring also works: record its window
+  with the Screen Recorder.
+- **Windows / Linux:** mirror the screen with an AirPlay receiver such as
+  [UxPlay](https://github.com/FDH2/UxPlay), then record its window with the Screen Recorder. Quality
+  depends on the Wi-Fi connection.
+
 ## Project structure
 
 ```
@@ -59,17 +103,22 @@ src/
   main/                         Electron main process
     index.ts                    main window, IPC
     host.ts                     services for tools: extra windows, folder picker, events
+    lib/                        shared helpers (ffmpeg remux, recording status, utils)
     tools/
       types.ts                  Tool interface
-      screen_recorder/          recording control, file writing, ffmpeg remux
+      screen_recorder/          recording control, file writing
+      android_recorder/         scrcpy detection, devices, recording
   preload/index.ts              exposes window.api to the UI
   renderer/                     React + Tailwind UI
     src/api.ts                  callTool(), onToolEvent()
     src/App.tsx                 sidebar + active tool
+    src/components/             shared UI: form fields, recording controls and status
     src/tools/screen_recorder/
       index.tsx                 main screen
       windows/overlay.tsx       floating timer with stop button
       windows/recorder.tsx      hidden window that does the capture
+    src/tools/android_recorder/
+      index.tsx                 main screen
 ```
 
 ## Adding a tool

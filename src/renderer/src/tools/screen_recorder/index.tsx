@@ -1,61 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { errorMessage } from "../../api";
-import {
-  call,
-  formatSeconds,
-  useElapsed,
-  useStatus,
-  type Options,
-  type Settings,
-  type Source,
-  type Status,
-} from "./shared";
-
-const inputClass =
-  "w-80 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm disabled:opacity-50 " +
-  "dark:border-gray-700 dark:bg-gray-900";
-const secondaryButtonClass =
-  "rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 " +
-  "dark:border-gray-700 dark:hover:bg-gray-800";
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[6rem_1fr] items-center gap-4">
-      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">{label}</span>
-      <div className="flex min-w-0 items-center gap-3">{children}</div>
-    </div>
-  );
-}
-
-function Segmented<T extends string | number>({
-  options,
-  value,
-  disabled,
-  onChange,
-}: {
-  options: { value: T; label: string }[];
-  value: T;
-  disabled: boolean;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="inline-flex overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(option.value)}
-          className={`px-4 py-2 text-sm font-medium disabled:opacity-50 ${
-            value === option.value ? "bg-blue-600 text-white" : "hover:bg-gray-100 dark:hover:bg-gray-800"
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+import { RecordControls, SaveToField, useRecordingStatus } from "../../components/recording";
+import { Field, FieldHint, inputClass, Notice, secondaryButtonClass, Segmented } from "../../components/ui";
+import { call, TOOL_ID, type Options, type Settings, type Source, type Status } from "./shared";
 
 function SourceSelect({
   sources,
@@ -80,37 +27,12 @@ function SourceSelect({
   );
 }
 
-function StatusLine({ status, elapsed, error }: { status: Status; elapsed: number; error: string | null }) {
-  if (error) {
-    return <p className="text-sm whitespace-pre-wrap text-red-600 dark:text-red-400">{error}</p>;
-  }
-  if (status.state === "recording") {
-    return (
-      <p className="flex items-center gap-2 text-sm font-medium text-red-600 dark:text-red-400">
-        <span className="size-2.5 animate-pulse rounded-full bg-red-600" />
-        Recording... {formatSeconds(elapsed)}
-      </p>
-    );
-  }
-  if (status.state === "saving") return <p className="text-sm text-gray-500">Saving...</p>;
-  if (status.state === "starting") return <p className="text-sm text-gray-500">Starting...</p>;
-  if (status.output) {
-    return (
-      <p className="text-sm text-gray-600 dark:text-gray-400">
-        Saved {status.output} ({formatSeconds(elapsed)})
-      </p>
-    );
-  }
-  return <p className="text-sm text-gray-500">Ready.</p>;
-}
-
 export default function ScreenRecorder() {
   const [options, setOptions] = useState<Options | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [folder, setFolder] = useState("");
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
-  const [status, setStatus] = useStatus();
-  const elapsed = useElapsed(status);
+  const [status, setStatus] = useRecordingStatus(TOOL_ID);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -168,25 +90,11 @@ export default function ScreenRecorder() {
     }
   }
 
-  async function chooseFolder() {
-    try {
-      setFolder(await call<string>("chooseFolder"));
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }
-
   if (!options || !settings || !status) {
     return error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : <p className="text-gray-500">Loading...</p>;
   }
 
   const locked = status.state !== "idle" || busy;
-  const recordLabel = {
-    idle: "Start recording",
-    starting: "Starting...",
-    recording: "Stop recording",
-    saving: "Saving...",
-  }[status.state];
 
   return (
     <div className="max-w-2xl">
@@ -196,11 +104,7 @@ export default function ScreenRecorder() {
         floating timer with a stop button is shown; it does not appear in the video.
       </p>
 
-      {options.warning && (
-        <p className="mb-6 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-          {options.warning}
-        </p>
-      )}
+      {options.warning && <Notice>{options.warning}</Notice>}
 
       <div className="flex flex-col gap-4">
         {options.usesSystemPicker ? (
@@ -242,6 +146,10 @@ export default function ScreenRecorder() {
                 Refresh
               </button>
             </Field>
+            {settings.source === "window" && (
+              // Chromium cannot capture minimized windows, so it leaves them out of the list.
+              <FieldHint>Minimized windows are not listed. Restore the window, then click Refresh.</FieldHint>
+            )}
           </>
         )}
 
@@ -271,37 +179,17 @@ export default function ScreenRecorder() {
           </select>
         </Field>
 
-        <Field label="Save to">
-          <span className="min-w-0 flex-1 truncate text-sm" title={folder}>
-            {folder}
-          </span>
-          <button type="button" className={secondaryButtonClass} disabled={locked} onClick={chooseFolder}>
-            Browse...
-          </button>
-        </Field>
+        <SaveToField toolId={TOOL_ID} folder={folder} disabled={locked} onChange={setFolder} onError={setError} />
       </div>
 
-      <div className="mt-8 mb-4 flex gap-3">
-        <button
-          type="button"
-          disabled={busy || status.state === "starting" || status.state === "saving"}
-          onClick={toggleRecording}
-          className={`w-44 rounded-md px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 ${
-            status.state === "recording" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"
-          }`}
-        >
-          {recordLabel}
-        </button>
-        <button
-          type="button"
-          className={secondaryButtonClass}
-          onClick={() => call("openFolder").catch((err) => setError(errorMessage(err)))}
-        >
-          Open folder
-        </button>
-      </div>
-
-      <StatusLine status={status} elapsed={elapsed} error={error ?? status.error} />
+      <RecordControls
+        toolId={TOOL_ID}
+        status={status}
+        busy={busy}
+        error={error}
+        onToggle={toggleRecording}
+        onError={setError}
+      />
     </div>
   );
 }

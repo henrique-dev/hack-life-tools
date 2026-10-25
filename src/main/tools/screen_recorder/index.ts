@@ -11,8 +11,10 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Host } from "../../host";
+import { remux } from "../../lib/ffmpeg";
+import { idleStatus, type RecordingStatus } from "../../lib/recording";
+import { errorMessage, timestamp, withTimeout } from "../../lib/util";
 import type { Tool, ToolApi } from "../types";
-import { remux } from "./remux";
 
 const TOOL_ID = "screen_recorder";
 const FPS_OPTIONS = [15, 30, 60];
@@ -40,16 +42,7 @@ export interface Settings {
   audio: string;
 }
 
-export interface Status {
-  state: "idle" | "starting" | "recording" | "saving";
-  /** Date.now() when the current recording started. */
-  startedAt: number | null;
-  /** Length in seconds of the last finished recording. */
-  duration: number;
-  /** File name of the last finished recording. */
-  output: string | null;
-  error: string | null;
-}
+export type Status = RecordingStatus;
 
 export interface Options {
   usesSystemPicker: boolean;
@@ -76,22 +69,6 @@ interface Recording {
   extension?: string;
 }
 
-function timestamp() {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
-  let timer: NodeJS.Timeout;
-  const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)));
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-function errorMessage(err: unknown) {
-  return err instanceof Error ? err.message : String(err);
-}
-
 /**
  * The capture itself runs in a hidden recorder window (src/renderer/src/tools/
  * screen_recorder/windows/recorder.tsx) with getDisplayMedia() and
@@ -102,7 +79,7 @@ function errorMessage(err: unknown) {
 class ScreenRecorderApi implements ToolApi {
   private folder = app.getPath("videos");
   private settings: Settings | null = null;
-  private status: Status = { state: "idle", startedAt: null, duration: 0, output: null, error: null };
+  private status: Status = idleStatus();
   private recording: Recording | null = null;
   private recorderWindow: BrowserWindow | null = null;
   private overlay: BrowserWindow | null = null;
