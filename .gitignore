@@ -1,0 +1,4 @@
+node_modules/
+out/
+recording_*.mp4
+recording_*.webm

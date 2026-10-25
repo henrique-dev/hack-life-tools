@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# cmd.exe can misparse labels in batch files with LF line endings.
+*.bat text eol=crlf
+# Shell scripts must keep LF to run on macOS and Linux.
+*.sh text eol=lf
