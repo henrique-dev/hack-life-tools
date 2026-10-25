@@ -104,20 +104,30 @@ supported.
 
 ### Video Editor
 
-Edits a video or audio file with ffmpeg. The original is never changed: the result is saved as a new file
-(`name_edited.mp4`, `name.mp3`, ...) next to it or in a folder you choose.
+Edits and converts a video or audio file with ffmpeg. The original is never changed: the result is saved
+as a new file (`name_edited.mp4`, `name.gif`, `name.mp3`, ...) next to it or in a folder you choose.
 
 - **Open** a file with the button or by dropping it on the window. A player previews it.
 - **Trim**: set the start and end, typing a time or using the player's current position.
-- **Output**:
-  - **Video**, optionally without its audio.
-  - **Audio only** (removes the video): MP3 or M4A.
-- **Compress** the video to make it smaller:
-  - **None**: copies the streams without re-encoding. Instant and lossless, but cuts snap to the nearest
-    keyframe, so they may be off by a few seconds.
-  - **Light / Medium / Strong**: re-encodes to H.264 with increasing compression.
+- **Output** type and format:
+
+  | Output | Formats | Codecs when re-encoding |
+  | --- | --- | --- |
+  | Video | MP4, MKV, MOV | H.264 + AAC |
+  | | WebM | VP9 + Opus |
+  | | AVI | MPEG-4 + MP3 |
+  | GIF / WebP | GIF, animated WebP | frame rate and width to choose; no sound |
+  | Audio only | MP3, M4A, WAV, FLAC, OGG | MP3, AAC, PCM, FLAC, Vorbis |
+
+- For video, optionally **remove the audio** and **compress**:
+  - **None**: copies the streams without re-encoding when the format allows it (e.g. MKV with H.264 to
+    MP4). Instant and lossless, but cuts snap to the nearest keyframe, so they may be off by a few
+    seconds. The tool says when the streams cannot be copied and will be re-encoded at high quality.
+  - **Light / Medium / Strong**: re-encodes with increasing compression.
   - **Target size**: aims for a size in MB (e.g. to fit an upload limit), in two passes.
   - **Resolution**: optionally reduce it to 1080p, 720p or 480p.
+- GIFs use a palette built from the clip for better colors. They get large quickly, so keep clips short
+  or lower the frame rate and width; the tool warns for long selections.
 
 ### iPhone / iPad
 
@@ -139,14 +149,14 @@ src/
   main/                         Electron main process
     index.ts                    main window, IPC
     host.ts                     services for tools: extra windows, folder picker, events
-    lib/                        shared helpers (ffmpeg remux, media:// protocol for local
-                                previews, processes, recording status, utils)
+    lib/                        shared helpers (ffmpeg runner and file probing, media://
+                                protocol for local previews, processes, recording status, utils)
     tools/
       types.ts                  Tool interface
       screen_recorder/          recording control, file writing
       android_recorder/         scrcpy detection, devices, recording
       video_downloader/         yt-dlp install/update, download queue
-      video_editor/             file probing, ffmpeg export
+      video_editor/             export commands; formats.ts (output formats, also used by the UI)
   preload/index.ts              exposes window.api to the UI
   renderer/                     React + Tailwind UI
     src/api.ts                  callTool(), onToolEvent()

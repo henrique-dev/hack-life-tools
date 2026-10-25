@@ -1,17 +1,26 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { callTool, errorMessage, getPathForFile, onToolEvent } from "../../api";
 import { Checkbox, Field, FieldHint, inputBaseClass, secondaryButtonClass, Segmented } from "../../components/ui";
-import type {
-  Compression,
-  ExportJob,
-  ExportSettings,
-  LoadedFile,
-  Options,
-} from "../../../../main/tools/video_editor";
+import type { ExportJob, LoadedFile, Options } from "../../../../main/tools/video_editor";
+// Plain data shared with the main process, so the UI applies the same rules.
+import {
+  canCopy,
+  FORMATS,
+  FORMATS_BY_KIND,
+  type Compression,
+  type ExportSettings,
+  type FormatKind,
+  type OutputFormat,
+} from "../../../../main/tools/video_editor/formats";
 
 const TOOL_ID = "video_editor";
 const call = <T = unknown,>(method: string, ...args: unknown[]) => callTool<T>(TOOL_ID, method, ...args);
 
+const KIND_OPTIONS: { value: FormatKind; label: string }[] = [
+  { value: "video", label: "Video" },
+  { value: "animated", label: "GIF / WebP" },
+  { value: "audio", label: "Audio only" },
+];
 const COMPRESSION_OPTIONS: { value: Compression; label: string }[] = [
   { value: "none", label: "None" },
   { value: "light", label: "Light" },
@@ -20,7 +29,7 @@ const COMPRESSION_OPTIONS: { value: Compression; label: string }[] = [
   { value: "target", label: "Target size" },
 ];
 const COMPRESSION_HINTS: Record<Compression, string> = {
-  none: "Fastest and no quality loss, but cuts snap to the nearest keyframe and may be off by a few seconds.",
+  none: "Copies the video without re-encoding: instant and no quality loss, but cuts snap to the nearest keyframe and may be off by a few seconds.",
   light: "Re-encodes with high quality. Usually a moderate size reduction.",
   medium: "Good balance between quality and size.",
   strong: "Smallest files; quality loss is visible.",
@@ -32,6 +41,19 @@ const SIZE_OPTIONS: { value: ExportSettings["maxSize"]; label: string }[] = [
   { value: 720, label: "720p" },
   { value: 480, label: "480p" },
 ];
+const FPS_OPTIONS: { value: ExportSettings["fps"]; label: string }[] = [10, 15, 20, 25].map((fps) => ({
+  value: fps as ExportSettings["fps"],
+  label: String(fps),
+}));
+const WIDTH_OPTIONS: { value: ExportSettings["width"]; label: string }[] = [
+  { value: 320, label: "320" },
+  { value: 480, label: "480" },
+  { value: 640, label: "640" },
+  { value: 800, label: "800" },
+  { value: 0, label: "Original" },
+];
+// Animated images grow quickly with length; suggest shorter clips beyond this.
+const LONG_ANIMATION_SECONDS = 20;
 
 function formatTime(seconds: number) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -128,6 +150,8 @@ export default function VideoEditor() {
   const player = useRef<HTMLVideoElement>(null);
   // Set while "Play selection" is playing, to pause at the end of the selection.
   const stopAt = useRef<number | null>(null);
+  // Last format chosen for each kind, restored when switching back to that kind.
+  const lastFormat = useRef<Partial<Record<FormatKind, OutputFormat>>>({});
 
   useEffect(() => {
     call<Options>("options")
@@ -142,14 +166,25 @@ export default function VideoEditor() {
 
   const update = (changes: Partial<ExportSettings>) => setSettings((current) => current && { ...current, ...changes });
 
+  function selectFormat(format: OutputFormat) {
+    lastFormat.current[FORMATS[format].kind] = format;
+    update({ format });
+  }
+
+  function selectKind(kind: FormatKind) {
+    selectFormat(lastFormat.current[kind] ?? FORMATS_BY_KIND[kind][0]);
+  }
+
   function show(loaded: LoadedFile | null) {
     if (!loaded) return;
     setFile(loaded);
     setStart(0);
     setEnd(loaded.duration);
     setCurrent(0);
-    // Files without video can only be exported as audio.
-    if (!loaded.video) update({ output: "audio" });
+    // Files without video can only be exported as audio, and files without audio not as audio.
+    const kind = settings && FORMATS[settings.format].kind;
+    if (!loaded.video && kind !== "audio") selectKind("audio");
+    if (!loaded.audio && kind === "audio") selectKind("video");
   }
 
   async function open(method: "openFile" | "load", ...args: unknown[]) {
@@ -198,6 +233,15 @@ export default function VideoEditor() {
 
   const running = job.state === "running";
   const length = end - start;
+  const kind = FORMATS[settings.format].kind;
+
+  // Without compression the video is copied as is when the format allows it; say when it cannot be.
+  let compressionHint = COMPRESSION_HINTS[settings.compression];
+  if (file && kind === "video" && settings.compression === "none" && !canCopy(settings, file)) {
+    compressionHint = settings.maxSize
+      ? "Changing the resolution needs re-encoding: the video will be re-encoded at high quality."
+      : `This video's codecs cannot be copied into ${FORMATS[settings.format].label} as they are, so it will be re-encoded at high quality.`;
+  }
   const details = file && [
     formatTime(file.duration),
     file.video && `${file.video.width}x${file.video.height} ${file.video.codec}`,
@@ -267,17 +311,22 @@ export default function VideoEditor() {
 
             <Field label="Output">
               <Segmented
-                options={[
-                  { value: "video", label: "Video" },
-                  { value: "audio", label: "Audio only" },
-                ].filter((option) => (option.value === "video" ? file.video : file.audio))}
-                value={settings.output}
+                options={KIND_OPTIONS.filter((option) => (option.value === "audio" ? file.audio : file.video))}
+                value={kind}
                 disabled={running}
-                onChange={(output) => update({ output: output as ExportSettings["output"] })}
+                onChange={selectKind}
+              />
+            </Field>
+            <Field label="Format">
+              <Segmented
+                options={FORMATS_BY_KIND[kind].map((format) => ({ value: format, label: FORMATS[format].label }))}
+                value={settings.format}
+                disabled={running}
+                onChange={selectFormat}
               />
             </Field>
 
-            {settings.output === "video" ? (
+            {kind === "video" && (
               <>
                 <Field label="Audio">
                   <Checkbox
@@ -304,23 +353,33 @@ export default function VideoEditor() {
                     <span className="text-sm text-gray-500">MB</span>
                   </Field>
                 )}
-                <FieldHint>{COMPRESSION_HINTS[settings.compression]}</FieldHint>
+                <FieldHint>{compressionHint}</FieldHint>
                 <Field label="Resolution">
                   <Segmented options={SIZE_OPTIONS} value={settings.maxSize} disabled={running} onChange={(maxSize) => update({ maxSize })} />
                 </Field>
               </>
-            ) : (
-              <Field label="Format">
-                <Segmented
-                  options={[
-                    { value: "mp3", label: "MP3" },
-                    { value: "m4a", label: "M4A" },
-                  ]}
-                  value={settings.audioFormat}
-                  disabled={running}
-                  onChange={(audioFormat) => update({ audioFormat: audioFormat as ExportSettings["audioFormat"] })}
-                />
-              </Field>
+            )}
+
+            {kind === "animated" && (
+              <>
+                <Field label="FPS">
+                  <Segmented options={FPS_OPTIONS} value={settings.fps} disabled={running} onChange={(fps) => update({ fps })} />
+                </Field>
+                <Field label="Width">
+                  <Segmented options={WIDTH_OPTIONS} value={settings.width} disabled={running} onChange={(width) => update({ width })} />
+                  <span className="text-sm text-gray-500">px</span>
+                </Field>
+                <FieldHint>
+                  {length > LONG_ANIMATION_SECONDS ? (
+                    <span className="text-amber-700 dark:text-amber-400">
+                      The selection is {Math.round(length)} seconds long. {FORMATS[settings.format].label} files get large
+                      quickly: trim a shorter part or lower the FPS and width.
+                    </span>
+                  ) : (
+                    `Animated image without sound, looping forever. Lower FPS and width make smaller files.`
+                  )}
+                </FieldHint>
+              </>
             )}
 
             <Field label="Save to">

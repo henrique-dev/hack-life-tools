@@ -1,13 +1,14 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import { rm, stat } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, extname, join, parse } from "node:path";
-import ffmpegPath from "ffmpeg-static";
+import { dirname, join, parse } from "node:path";
 import type { Host } from "../../host";
-import { killTree } from "../../lib/process";
+import { FfmpegRunner, requireFfmpeg, seconds, uniquePath, type FfmpegJob, type FfmpegPass } from "../../lib/ffmpeg";
+import { probe, type MediaInfo } from "../../lib/probe";
 import type { Tool, ToolApi } from "../types";
-import { probe, type MediaInfo } from "./probe";
+import { canCopy, FORMATS, type ExportSettings, type OutputFormat } from "./formats";
+
+export type { Compression, ExportSettings, OutputFormat } from "./formats";
+export type ExportJob = FfmpegJob;
 
 const TOOL_ID = "video_editor";
 const MIN_LENGTH = 0.1;
@@ -18,26 +19,44 @@ const MIN_VIDEO_KBPS = 50;
 const MEDIA_EXTENSIONS = ["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "ts", "3gp",
   "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"];
 
-/** H.264 quality (CRF: lower is better and bigger) and audio bitrate for each compression level. */
-const COMPRESSION = {
-  light: { crf: 23, audioKbps: 128 },
-  medium: { crf: 28, audioKbps: 128 },
-  strong: { crf: 33, audioKbps: 96 },
-} as const;
-const TARGET_AUDIO_KBPS = 128;
+type Quality = "high" | "light" | "medium" | "strong";
 
-export type Compression = "none" | keyof typeof COMPRESSION | "target";
+/** Video and audio encoders of each video format, with their quality settings. */
+const VIDEO_ENCODERS: Record<"h264" | "vp9" | "mpeg4", { args: string[]; quality: Record<Quality, string[]> }> = {
+  h264: {
+    args: ["-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p"],
+    quality: { high: ["-crf", "20"], light: ["-crf", "23"], medium: ["-crf", "28"], strong: ["-crf", "33"] },
+  },
+  vp9: {
+    // Constant quality mode (-b:v 0); the other options trade a little size for speed.
+    args: ["-c:v", "libvpx-vp9", "-row-mt", "1", "-deadline", "good", "-cpu-used", "4", "-pix_fmt", "yuv420p"],
+    quality: {
+      high: ["-crf", "28", "-b:v", "0"], light: ["-crf", "32", "-b:v", "0"],
+      medium: ["-crf", "38", "-b:v", "0"], strong: ["-crf", "45", "-b:v", "0"],
+    },
+  },
+  mpeg4: {
+    args: ["-c:v", "mpeg4", "-pix_fmt", "yuv420p"],
+    quality: { high: ["-q:v", "2"], light: ["-q:v", "4"], medium: ["-q:v", "7"], strong: ["-q:v", "12"] },
+  },
+};
+const AUDIO_KBPS: Record<Quality, number> = { high: 192, light: 160, medium: 128, strong: 96 };
 
-export interface ExportSettings {
-  output: "video" | "audio";
-  removeAudio: boolean;
-  compression: Compression;
-  /** For compression "target". */
-  targetSizeMb: number;
-  /** Shorter side of the video in pixels; 0 keeps the original size. */
-  maxSize: 0 | 1080 | 720 | 480;
-  audioFormat: "mp3" | "m4a";
-}
+const VIDEO_FORMAT_CODECS: Partial<Record<OutputFormat, { video: keyof typeof VIDEO_ENCODERS; audio: string }>> = {
+  mp4: { video: "h264", audio: "aac" },
+  mkv: { video: "h264", audio: "aac" },
+  mov: { video: "h264", audio: "aac" },
+  webm: { video: "vp9", audio: "libopus" },
+  avi: { video: "mpeg4", audio: "libmp3lame" },
+};
+
+const AUDIO_FORMAT_ARGS: Partial<Record<OutputFormat, string[]>> = {
+  mp3: ["-c:a", "libmp3lame", "-q:a", "2"],
+  m4a: ["-c:a", "aac", "-b:a", "192k"],
+  wav: ["-c:a", "pcm_s16le"],
+  flac: ["-c:a", "flac"],
+  ogg: ["-c:a", "libvorbis", "-q:a", "5"],
+};
 
 export interface ExportRequest {
   path: string;
@@ -45,17 +64,6 @@ export interface ExportRequest {
   start: number;
   end: number;
   settings: ExportSettings;
-}
-
-export interface ExportJob {
-  state: "idle" | "running" | "done" | "error" | "canceled";
-  /** e.g. "Pass 1 of 2" for target-size compression. */
-  step: string | null;
-  percent: number;
-  output: string | null;
-  inputSize: number;
-  outputSize: number | null;
-  error: string | null;
 }
 
 export interface LoadedFile extends MediaInfo {
@@ -70,57 +78,38 @@ export interface Options {
   job: ExportJob;
 }
 
-const idleJob = (): ExportJob => ({
-  state: "idle", step: null, percent: 0, output: null, inputSize: 0, outputSize: null, error: null,
-});
-
-function seconds(value: number) {
-  return value.toFixed(3);
-}
-
-function uniquePath(dir: string, base: string, extension: string) {
-  let candidate = join(dir, `${base}.${extension}`);
-  for (let i = 2; existsSync(candidate); i++) candidate = join(dir, `${base} (${i}).${extension}`);
-  return candidate;
-}
-
 /**
  * Scale so the shorter side is at most maxSize (0: keep the size), with even
- * dimensions as H.264 requires. Quotes keep the commas inside each expression.
+ * dimensions as most video codecs require. Quotes keep the commas inside each expression.
  */
-function scaleFilter(maxSize: number) {
+function videoScale(maxSize: number) {
   if (!maxSize) return "scale=trunc(iw/2)*2:trunc(ih/2)*2";
   const limit = (side: string) => `trunc(min(${side},${maxSize})/2)*2`;
   return `scale='if(gte(iw,ih),-2,${limit("iw")})':'if(gte(iw,ih),${limit("ih")},-2)'`;
 }
 
-interface Pass {
-  args: string[];
-  step: string | null;
-  /** Share of the total progress this pass covers, and where it starts. */
-  weight: number;
-  offset: number;
+/** Frame rate and width filters for GIF and WebP (never enlarges). */
+function animatedFilters(settings: ExportSettings) {
+  const filters = [`fps=${settings.fps}`];
+  if (settings.width) filters.push(`scale='min(iw,${settings.width})':-1:flags=lanczos`);
+  return filters.join(",");
 }
 
 /**
- * Trims, removes audio or video, and compresses files with ffmpeg. The
- * original is never changed: the result is saved as a new file.
+ * Trims, converts, removes audio or video, and compresses files with ffmpeg.
+ * The original is never changed: the result is saved as a new file.
  */
 class VideoEditorApi implements ToolApi {
   private settings: ExportSettings = {
-    output: "video", removeAudio: false, compression: "none", targetSizeMb: 25, maxSize: 0, audioFormat: "mp3",
+    format: "mp4", removeAudio: false, compression: "none", targetSizeMb: 25, maxSize: 0, fps: 15, width: 480,
   };
   private folder: string | null = null;
-  private job: ExportJob = idleJob();
-  private child: ChildProcess | null = null;
-  private canceled = false;
-  /** Removes temporary files of the running export (two-pass logs). */
-  private cleanupAfter: (() => Promise<void>) | null = null;
+  private runner = new FfmpegRunner((job) => this.host.emit(TOOL_ID, "job", job));
 
   constructor(private readonly host: Host) {}
 
   options(): Options {
-    return { settings: this.settings, folder: this.folder, job: this.job };
+    return { settings: this.settings, folder: this.folder, job: this.runner.job };
   }
 
   async openFile(): Promise<LoadedFile | null> {
@@ -154,52 +143,60 @@ class VideoEditorApi implements ToolApi {
   }
 
   getJob() {
-    return this.job;
+    return this.runner.job;
   }
 
   async export(request: ExportRequest) {
-    if (this.job.state === "running") throw new Error("An export is already running.");
-    if (!ffmpegPath) throw new Error("ffmpeg-static has no binary for this platform.");
-    this.settings = request.settings;
+    if (this.runner.running) throw new Error("An export is already running.");
+    requireFfmpeg();
+    const { settings } = request;
+    this.settings = settings;
 
     const info = await probe(request.path);
-    const { settings } = request;
+    const kind = FORMATS[settings.format].kind;
     const start = Math.max(0, request.start);
-    const end = Math.min(info.duration, request.end);
-    const length = end - start;
+    const length = Math.min(info.duration, request.end) - start;
     if (length < MIN_LENGTH) throw new Error("The selection is too short.");
-    if (settings.output === "audio" && !info.audio) throw new Error("This file has no audio.");
-    if (settings.output === "video" && !info.video) throw new Error("This file has no video. Choose \"Audio only\".");
+    if (kind === "audio" && !info.audio) throw new Error("This file has no audio.");
+    if (kind !== "audio" && !info.video) throw new Error("This file has no video. Choose an audio format.");
 
     const { name } = parse(request.path);
     const folder = this.folder ?? dirname(request.path);
-    let output: string;
-    let passes: Pass[];
-    const input = ["-ss", seconds(start), "-i", request.path, "-t", seconds(length)];
+    const output = uniquePath(folder, kind === "video" ? `${name}_edited` : name, settings.format);
+    // -ss and -t before -i limit what is read from the input. After -i, -t would
+    // only limit the output, and filters that wait for the end of their input
+    // (GIF's palettegen) would decode the whole file.
+    const input = ["-ss", seconds(start), "-t", seconds(length), "-i", request.path];
+    const noExtras = ["-sn", "-dn"];
 
-    if (settings.output === "audio") {
-      output = uniquePath(folder, name, settings.audioFormat);
-      const codec = settings.audioFormat === "mp3" ? ["-c:a", "libmp3lame", "-q:a", "2"] : ["-c:a", "aac", "-b:a", "192k"];
-      passes = [{ args: [...input, "-vn", "-sn", "-dn", ...codec, output], step: null, weight: 1, offset: 0 }];
-    } else if (settings.compression === "none" && !settings.maxSize) {
+    let passes: FfmpegPass[];
+    let cleanup: (() => Promise<void>) | undefined;
+    const single = (args: string[]): FfmpegPass[] => [{ args: [...input, ...args, output], step: null, weight: 1, offset: 0 }];
+
+    if (kind === "audio") {
+      passes = single(["-vn", ...noExtras, ...AUDIO_FORMAT_ARGS[settings.format]!]);
+    } else if (settings.format === "gif") {
+      // Build a palette from the clip itself for much better colors than GIF's default one.
+      const filter = `${animatedFilters(settings)},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`;
+      passes = single(["-an", ...noExtras, "-filter_complex", filter, "-loop", "0"]);
+    } else if (settings.format === "webp") {
+      passes = single(["-an", ...noExtras, "-vf", animatedFilters(settings), "-c:v", "libwebp_anim", "-lossless", "0",
+        "-quality", "75", "-compression_level", "4", "-loop", "0"]);
+    } else if (canCopy(settings, info)) {
       // Copy the streams without re-encoding: fast and lossless, but the cut
-      // snaps to the nearest keyframe. Keep the container so every codec fits.
-      output = uniquePath(folder, `${name}_edited`, extname(request.path).slice(1) || "mp4");
-      const audio = settings.removeAudio ? ["-an"] : [];
-      passes = [{
-        args: [...input, "-c", "copy", ...audio, "-sn", "-dn", "-avoid_negative_ts", "make_zero", output],
-        step: null, weight: 1, offset: 0,
-      }];
+      // snaps to the nearest keyframe.
+      const audio = settings.removeAudio ? ["-an"] : ["-c:a", "copy"];
+      passes = single(["-c:v", "copy", ...audio, ...noExtras, "-avoid_negative_ts", "make_zero", ...this.containerArgs(settings.format)]);
     } else {
-      output = uniquePath(folder, `${name}_edited`, "mp4");
-      const video = ["-vf", scaleFilter(settings.maxSize), "-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p"];
+      const codecs = VIDEO_FORMAT_CODECS[settings.format]!;
+      const encoder = VIDEO_ENCODERS[codecs.video];
       const keepAudio = !settings.removeAudio && info.audio;
-      const mp4 = ["-sn", "-dn", "-movflags", "+faststart", output];
+      const video = ["-vf", videoScale(settings.maxSize), ...encoder.args];
+      const tail = [...noExtras, ...this.containerArgs(settings.format)];
 
       if (settings.compression === "target") {
-        // Two passes: the first analyzes the video so the second can hit the
-        // target size closely.
-        const audioKbps = keepAudio ? TARGET_AUDIO_KBPS : 0;
+        // Two passes: the first analyzes the video so the second can hit the target size closely.
+        const audioKbps = keepAudio ? AUDIO_KBPS.medium : 0;
         const totalKbps = (settings.targetSizeMb * 1024 * 1024 * 8 * TARGET_SIZE_MARGIN) / 1000 / length;
         const videoKbps = Math.floor(totalKbps - audioKbps);
         if (videoKbps < MIN_VIDEO_KBPS) {
@@ -208,106 +205,45 @@ class VideoEditorApi implements ToolApi {
         }
         const passLog = join(tmpdir(), `hack-life-tools-${process.pid}-${Date.now()}`);
         const bitrate = ["-b:v", `${videoKbps}k`, "-passlogfile", passLog];
-        const audio = keepAudio ? ["-c:a", "aac", "-b:a", `${audioKbps}k`] : ["-an"];
+        const audio = keepAudio ? ["-c:a", codecs.audio, "-b:a", `${audioKbps}k`] : ["-an"];
         const nullOutput = process.platform === "win32" ? "NUL" : "/dev/null";
         passes = [
           { args: [...input, ...video, ...bitrate, "-pass", "1", "-an", "-f", "null", nullOutput], step: "Pass 1 of 2", weight: 0.5, offset: 0 },
-          { args: [...input, ...video, ...bitrate, "-pass", "2", ...audio, ...mp4], step: "Pass 2 of 2", weight: 0.5, offset: 0.5 },
+          { args: [...input, ...video, ...bitrate, "-pass", "2", ...audio, ...tail, output], step: "Pass 2 of 2", weight: 0.5, offset: 0.5 },
         ];
-        this.cleanupAfter = () => this.removePassLogs(passLog);
+        // x264 and libvpx write <prefix>-0.log (and x264 a .mbtree file).
+        cleanup = () =>
+          Promise.all(["-0.log", "-0.log.mbtree", "-0.log.temp", "-0.log.mbtree.temp"].map((suffix) => rm(passLog + suffix, { force: true })))
+            .then(() => {});
       } else {
-        const level = COMPRESSION[settings.compression === "none" ? "light" : settings.compression];
-        // "none" only reaches here when resizing: keep quality high.
-        const crf = settings.compression === "none" ? 20 : level.crf;
-        const audio = keepAudio ? ["-c:a", "aac", "-b:a", `${level.audioKbps}k`] : ["-an"];
-        passes = [{ args: [...input, ...video, "-crf", String(crf), ...audio, ...mp4], step: null, weight: 1, offset: 0 }];
+        // "none" reaches here when the streams cannot be copied: keep the quality high.
+        const quality: Quality = settings.compression === "none" ? "high" : settings.compression;
+        const audio = keepAudio ? ["-c:a", codecs.audio, "-b:a", `${AUDIO_KBPS[quality]}k`] : ["-an"];
+        passes = single([...video, ...encoder.quality[quality], ...audio, ...tail]);
       }
     }
 
-    this.job = { ...idleJob(), state: "running", inputSize: info.size, output, step: passes[0].step };
-    this.canceled = false;
-    this.emit();
-    this.runPasses(passes, length, output);
-    return this.job;
+    return this.runner.start(passes, { length, output, inputSize: info.size, cleanup });
   }
 
   cancel() {
-    if (this.job.state !== "running") return this.job;
-    this.canceled = true;
-    if (this.child) killTree(this.child);
-    return this.job;
+    this.runner.cancel();
+    return this.runner.job;
   }
 
   shutdown() {
-    this.cancel();
+    this.runner.cancel();
   }
 
-  // --- Internals ---
-
-  private async runPasses(passes: Pass[], length: number, output: string) {
-    let error: string | null = null;
-    for (const pass of passes) {
-      if (this.canceled) break;
-      this.job = { ...this.job, step: pass.step };
-      this.emit();
-      error = await this.runFfmpeg(pass, length);
-      if (error) break;
-    }
-
-    await this.cleanupAfter?.().catch(() => {});
-    this.cleanupAfter = null;
-    this.child = null;
-
-    if (this.canceled || error) {
-      await rm(output, { force: true });
-      this.job = { ...this.job, state: this.canceled ? "canceled" : "error", error: this.canceled ? null : error, output: null };
-    } else {
-      const { size } = await stat(output);
-      this.job = { ...this.job, state: "done", step: null, percent: 100, outputSize: size };
-    }
-    this.emit();
-  }
-
-  /** Run one ffmpeg pass, reporting progress. Returns an error message, or null. */
-  private runFfmpeg(pass: Pass, length: number) {
-    return new Promise<string | null>((resolve) => {
-      const args = ["-hide_banner", "-y", "-nostdin", "-loglevel", "error", "-progress", "pipe:1", "-nostats", ...pass.args];
-      const child = spawn(ffmpegPath!, args, { windowsHide: true, detached: process.platform !== "win32" });
-      this.child = child;
-
-      let stderr = "";
-      let lastEmit = 0;
-      child.stderr.on("data", (data) => (stderr += data));
-      child.stdout.on("data", (data: Buffer) => {
-        // -progress prints key=value lines, e.g. "out_time_us=1234567".
-        const time = /out_time_us=(\d+)/.exec(data.toString())?.[1];
-        if (!time) return;
-        const done = Math.min(1, Number(time) / 1e6 / length);
-        this.job = { ...this.job, percent: 100 * (pass.offset + pass.weight * done) };
-        if (Date.now() - lastEmit > 250) {
-          lastEmit = Date.now();
-          this.emit();
-        }
-      });
-      child.on("error", (err) => resolve(err.message));
-      child.on("close", (code) => resolve(code === 0 ? null : stderr.trim().split(/\r?\n/).slice(-3).join("\n") || `ffmpeg exited with code ${code}.`));
-    });
-  }
-
-  private async removePassLogs(prefix: string) {
-    // x264 writes <prefix>-0.log and <prefix>-0.log.mbtree.
-    await Promise.all([`${prefix}-0.log`, `${prefix}-0.log.mbtree`, `${prefix}-0.log.temp`, `${prefix}-0.log.mbtree.temp`]
-      .map((file) => rm(file, { force: true })));
-  }
-
-  private emit() {
-    this.host.emit(TOOL_ID, "job", this.job);
+  /** Lets MP4 and MOV files start playing before they are fully downloaded. */
+  private containerArgs(format: OutputFormat) {
+    return format === "mp4" || format === "mov" ? ["-movflags", "+faststart"] : [];
   }
 }
 
 const tool: Tool = {
   name: "Video Editor",
-  description: "Trim videos, remove their audio or video, and compress them to make files smaller.",
+  description: "Trim, convert (also to GIF), remove audio or video, and compress videos.",
   createApi: (host) => new VideoEditorApi(host),
 };
 
