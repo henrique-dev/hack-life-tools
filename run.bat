@@ -24,6 +24,15 @@ if errorlevel 1 goto :fail
 copy /y package.json "%MARKER%" >nul
 
 :launch
+rem Electron's binary is fetched by a postinstall script that npm sometimes
+rem skips (flaky network, interrupted install). Without it the app fails with
+rem "Error: Electron uninstall", so make sure it is actually there.
+if exist "node_modules\electron\dist\" goto :start
+echo Electron binary missing, downloading it...
+call node node_modules\electron\install.js
+if errorlevel 1 goto :fail
+
+:start
 if /i "%~1"=="dev" (
   call npm run dev
 ) else (

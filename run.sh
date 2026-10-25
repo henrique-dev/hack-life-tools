@@ -23,6 +23,14 @@ if ! cmp -s package.json "$MARKER"; then
   cp package.json "$MARKER"
 fi
 
+# Electron's binary is fetched by a postinstall script that npm sometimes
+# skips (flaky network, interrupted install). Without it the app fails with
+# "Error: Electron uninstall", so make sure it is actually there.
+if [ ! -d node_modules/electron/dist ]; then
+  echo "Electron binary missing, downloading it..."
+  node node_modules/electron/install.js
+fi
+
 if [ "$1" = "dev" ]; then
   exec npm run dev
 else
