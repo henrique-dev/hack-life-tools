@@ -22,6 +22,20 @@ Or use the launcher, which installs the dependencies when needed:
 | Windows | double-click `run.bat` | `run.bat dev` |
 | macOS / Linux | `sh run.sh` | `sh run.sh dev` |
 
+### Chrome extension
+
+`chrome-extension/` adds a toolbar button to Chrome that opens the app.
+
+1. Run the launcher (`run.bat` or `run.sh`) once: it registers the `hacklife://` link that the extension
+   uses (again on every run, so it follows the folder if it moves). On Windows this is a registry entry,
+   on Linux `~/.local/share/applications/hacklife.desktop`, and on macOS a small
+   `~/Applications/Hack Life Tools.app` that runs `run.sh`.
+2. In Chrome, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick
+   the `chrome-extension` folder.
+3. Click the button. Chrome asks whether to open the app; check "Always allow" to skip the question.
+
+If the app is already open, its window is brought to the front.
+
 ## Tools
 
 ### Screen Recorder

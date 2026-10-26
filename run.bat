@@ -14,6 +14,12 @@ set "ELECTRON_RUN_AS_NODE="
 where npm >nul 2>&1
 if errorlevel 1 goto :no_node
 
+rem Register hacklife:// so the Chrome extension (chrome-extension folder) can
+rem open the app. Done on every run so it follows the folder if it moves.
+reg add "HKCU\Software\Classes\hacklife" /ve /d "URL:Hack Life Tools" /f >nul
+reg add "HKCU\Software\Classes\hacklife" /v "URL Protocol" /d "" /f >nul
+reg add "HKCU\Software\Classes\hacklife\shell\open\command" /ve /d "\"%~dp0run.bat\" \"%%1\"" /f >nul
+
 set "MARKER=node_modules\.package.json.installed"
 fc /b package.json "%MARKER%" >nul 2>&1
 if not errorlevel 1 goto :launch

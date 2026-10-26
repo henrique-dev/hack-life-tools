@@ -12,6 +12,7 @@ if (process.platform === "linux") {
 registerMediaScheme();
 
 let host: Host;
+let mainWindow: BrowserWindow | undefined;
 const apis = new Map<string, ToolApi>();
 
 function getApi(toolId: string): ToolApi {
@@ -48,6 +49,7 @@ function createMainWindow() {
     autoHideMenuBar: true,
     webPreferences: { preload: preloadPath },
   });
+  mainWindow = window;
   host = new Host(window);
   loadRoute(window, "");
 
@@ -65,8 +67,19 @@ function createMainWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  handleMediaProtocol();
-  createMainWindow();
-});
+// Opening the app again (e.g. from the Chrome extension) brings the running
+// window to the front instead of starting a second copy.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+  app.whenReady().then(() => {
+    handleMediaProtocol();
+    createMainWindow();
+  });
+}
 app.on("window-all-closed", () => app.quit());
