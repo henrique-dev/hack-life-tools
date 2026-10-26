@@ -123,6 +123,9 @@ as a new file (`name_edited.mp4`, `name.gif`, `name.mp3`, ...) next to it or in 
 
 - **Open** a file with the button or by dropping it on the window. A player previews it.
 - **Trim**: set the start and end, typing a time or using the player's current position.
+- **Blur** parts of the frame (names, passwords, ...): click **Add area** and drag over the video. The
+  player previews the blur. An area is blurred for the whole video unless you change its times. Blurring
+  needs re-encoding, so the streams are never just copied.
 - **Output** type and format:
 
   | Output | Formats | Codecs when re-encoding |

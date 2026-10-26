@@ -15,6 +15,8 @@ const MIN_LENGTH = 0.1;
 // Share of the target size reserved for the container, so the result stays under it.
 const TARGET_SIZE_MARGIN = 0.96;
 const MIN_VIDEO_KBPS = 50;
+// Smallest blurred area side, in pixels.
+const MIN_BLUR_PIXELS = 4;
 
 const MEDIA_EXTENSIONS = ["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "ts", "3gp",
   "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"];
@@ -58,12 +60,23 @@ const AUDIO_FORMAT_ARGS: Partial<Record<OutputFormat, string[]>> = {
   ogg: ["-c:a", "libvorbis", "-q:a", "5"],
 };
 
+/** Part of the frame to blur: position and size as fractions of the frame (0-1), times in seconds of the file. */
+export interface BlurRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  start: number;
+  end: number;
+}
+
 export interface ExportRequest {
   path: string;
   /** Seconds. */
   start: number;
   end: number;
   settings: ExportSettings;
+  blur: BlurRegion[];
 }
 
 export interface LoadedFile extends MediaInfo {
@@ -96,7 +109,38 @@ function animatedFilters(settings: ExportSettings) {
 }
 
 /**
- * Trims, converts, removes audio or video, and compresses files with ffmpeg.
+ * Filter graph that blurs each region of the input video while it is shown,
+ * ending in [blurred]. `start` is where the export starts in the file: the
+ * output's timestamps (t) start at 0 there.
+ */
+function blurGraph(regions: BlurRegion[], frame: { width: number; height: number }, start: number, end: number) {
+  const even = (value: number) => Math.floor(value / 2) * 2;
+  // Offset and length in pixels along one side, inside the frame, even for chroma subsampling.
+  const span = (from: number, size: number, total: number) => {
+    const length = Math.min(even(total), Math.max(MIN_BLUR_PIXELS, even(size * total)));
+    return [Math.max(0, even(Math.min(from * total, total - length))), length];
+  };
+
+  const graph = [`[0:v]split=${regions.length + 1}[base]${regions.map((_, i) => `[r${i}]`).join("")}`];
+  let last = "base";
+  regions.forEach((region, i) => {
+    const [x, width] = span(region.x, region.width, frame.width);
+    const [y, height] = span(region.y, region.height, frame.height);
+    // A strong box blur (power 3) so text inside cannot be read. The radius
+    // limits are half the area's shorter side, and a quarter of it for chroma.
+    const radius = Math.floor(Math.min(width, height) / 4);
+    graph.push(`[r${i}]crop=${width}:${height}:${x}:${y},boxblur=luma_radius=${radius}:luma_power=3:chroma_radius=${Math.floor(radius / 2)}:chroma_power=3[b${i}]`);
+    const always = region.start <= start && region.end >= end;
+    const enable = always ? "" : `:enable='between(t,${seconds(region.start - start)},${seconds(region.end - start)})'`;
+    const next = i === regions.length - 1 ? "blurred" : `o${i}`;
+    graph.push(`[${last}][b${i}]overlay=${x}:${y}${enable}[${next}]`);
+    last = next;
+  });
+  return graph.join(";");
+}
+
+/**
+ * Trims, converts, blurs parts of the frame, removes audio or video, and compresses files with ffmpeg.
  * The original is never changed: the result is saved as a new file.
  */
 class VideoEditorApi implements ToolApi {
@@ -168,6 +212,12 @@ class VideoEditorApi implements ToolApi {
     // (GIF's palettegen) would decode the whole file.
     const input = ["-ss", seconds(start), "-t", seconds(length), "-i", request.path];
     const noExtras = ["-sn", "-dn"];
+    const end = start + length;
+    const blur = request.blur.filter((region) => region.start < end && region.end > start);
+    const graph = kind !== "audio" && info.video && blur.length ? blurGraph(blur, info.video, start, end) : null;
+    // The video filters, after the blur when there is one.
+    const filter = (option: "-vf" | "-filter_complex", chain: string) =>
+      graph ? ["-filter_complex", `${graph};[blurred]${chain}`] : [option, chain];
 
     let passes: FfmpegPass[];
     let cleanup: (() => Promise<void>) | undefined;
@@ -177,12 +227,12 @@ class VideoEditorApi implements ToolApi {
       passes = single(["-vn", ...noExtras, ...AUDIO_FORMAT_ARGS[settings.format]!]);
     } else if (settings.format === "gif") {
       // Build a palette from the clip itself for much better colors than GIF's default one.
-      const filter = `${animatedFilters(settings)},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`;
-      passes = single(["-an", ...noExtras, "-filter_complex", filter, "-loop", "0"]);
+      const palette = `${animatedFilters(settings)},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`;
+      passes = single(["-an", ...noExtras, ...filter("-filter_complex", palette), "-loop", "0"]);
     } else if (settings.format === "webp") {
-      passes = single(["-an", ...noExtras, "-vf", animatedFilters(settings), "-c:v", "libwebp_anim", "-lossless", "0",
+      passes = single(["-an", ...noExtras, ...filter("-vf", animatedFilters(settings)), "-c:v", "libwebp_anim", "-lossless", "0",
         "-quality", "75", "-compression_level", "4", "-loop", "0"]);
-    } else if (canCopy(settings, info)) {
+    } else if (!graph && canCopy(settings, info)) {
       // Copy the streams without re-encoding: fast and lossless, but the cut
       // snaps to the nearest keyframe.
       const audio = settings.removeAudio ? ["-an"] : ["-c:a", "copy"];
@@ -191,7 +241,7 @@ class VideoEditorApi implements ToolApi {
       const codecs = VIDEO_FORMAT_CODECS[settings.format]!;
       const encoder = VIDEO_ENCODERS[codecs.video];
       const keepAudio = !settings.removeAudio && info.audio;
-      const video = ["-vf", videoScale(settings.maxSize), ...encoder.args];
+      const video = [...filter("-vf", videoScale(settings.maxSize)), ...encoder.args];
       const tail = [...noExtras, ...this.containerArgs(settings.format)];
 
       if (settings.compression === "target") {
@@ -243,7 +293,7 @@ class VideoEditorApi implements ToolApi {
 
 const tool: Tool = {
   name: "Video Editor",
-  description: "Trim, convert (also to GIF), remove audio or video, and compress videos.",
+  description: "Trim, convert (also to GIF), blur parts of the frame, remove audio or video, and compress videos.",
   createApi: (host) => new VideoEditorApi(host),
 };
 

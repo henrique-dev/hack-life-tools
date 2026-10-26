@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent, type RefObject } from "react";
 import { callTool, errorMessage, getPathForFile, onToolEvent } from "../../api";
 import { Checkbox, Field, FieldHint, inputBaseClass, secondaryButtonClass, Segmented } from "../../components/ui";
-import type { ExportJob, LoadedFile, Options } from "../../../../main/tools/video_editor";
+import type { BlurRegion, ExportJob, LoadedFile, Options } from "../../../../main/tools/video_editor";
 // Plain data shared with the main process, so the UI applies the same rules.
 import {
   canCopy,
@@ -54,6 +54,8 @@ const WIDTH_OPTIONS: { value: ExportSettings["width"]; label: string }[] = [
 ];
 // Animated images grow quickly with length; suggest shorter clips beyond this.
 const LONG_ANIMATION_SECONDS = 20;
+// Smallest blur area drawn, as a fraction of the frame; shorter drags are taken as clicks.
+const MIN_BLUR_SIZE = 0.01;
 
 function formatTime(seconds: number) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -109,6 +111,107 @@ function Timeline({ duration, start, end, current }: { duration: number; start: 
   );
 }
 
+type Box = Pick<BlurRegion, "x" | "y" | "width" | "height">;
+
+const clamp = (value: number) => Math.min(1, Math.max(0, value));
+const boxStyle = (box: Box) => ({
+  left: `${100 * box.x}%`,
+  top: `${100 * box.y}%`,
+  width: `${100 * box.width}%`,
+  height: `${100 * box.height}%`,
+});
+
+/** Where the frame is drawn inside the video element, which letterboxes it to keep its aspect ratio. */
+function useFrameRect(video: RefObject<HTMLVideoElement | null>, frame: { width: number; height: number }) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setSize({ width: element.clientWidth, height: element.clientHeight }));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [video]);
+  const scale = Math.min(size.width / frame.width, size.height / frame.height) || 0;
+  const width = frame.width * scale;
+  const height = frame.height * scale;
+  return { left: (size.width - width) / 2, top: (size.height - height) / 2, width, height };
+}
+
+/**
+ * Blur areas over the video, blurred while they are shown at the current time.
+ * While drawing, dragging over the video adds an area; otherwise the video's
+ * controls stay usable under it.
+ */
+function BlurOverlay({ video, frame, regions, current, drawing, disabled, onDraw, onRemove }: {
+  video: RefObject<HTMLVideoElement | null>;
+  frame: { width: number; height: number };
+  regions: BlurRegion[];
+  current: number;
+  drawing: boolean;
+  disabled: boolean;
+  onDraw: (box: Box) => void;
+  onRemove: (index: number) => void;
+}) {
+  const rect = useFrameRect(video, frame);
+  const [from, setFrom] = useState<{ x: number; y: number } | null>(null);
+  const [draft, setDraft] = useState<Box | null>(null);
+
+  function point(event: PointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return { x: clamp((event.clientX - bounds.left) / bounds.width), y: clamp((event.clientY - bounds.top) / bounds.height) };
+  }
+
+  function move(event: PointerEvent<HTMLDivElement>) {
+    if (!from) return;
+    const to = point(event);
+    setDraft({ x: Math.min(from.x, to.x), y: Math.min(from.y, to.y), width: Math.abs(to.x - from.x), height: Math.abs(to.y - from.y) });
+  }
+
+  function finish() {
+    if (draft && draft.width >= MIN_BLUR_SIZE && draft.height >= MIN_BLUR_SIZE) onDraw(draft);
+    setFrom(null);
+    setDraft(null);
+  }
+
+  return (
+    <div
+      className={`absolute ${drawing ? "cursor-crosshair" : "pointer-events-none"}`}
+      style={rect}
+      onPointerDown={(event) => {
+        if (!drawing) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setFrom(point(event));
+      }}
+      onPointerMove={move}
+      onPointerUp={finish}
+    >
+      {regions.map((region, i) => {
+        const shown = current >= region.start && current <= region.end;
+        return (
+          <div
+            key={i}
+            className={`absolute border border-dashed ${shown ? "border-white/80 backdrop-blur-lg" : "border-white/40"}`}
+            style={boxStyle(region)}
+          >
+            <span className="absolute top-0.5 left-1 text-xs font-semibold text-white drop-shadow">{i + 1}</span>
+            {!drawing && !disabled && (
+              <button
+                type="button"
+                title="Remove"
+                className="pointer-events-auto absolute -top-2.5 -right-2.5 flex size-5 items-center justify-center rounded-full bg-gray-900 text-xs text-white hover:bg-red-600"
+                onClick={() => onRemove(i)}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {draft && <div className="absolute border-2 border-blue-500 bg-blue-500/20" style={boxStyle(draft)} />}
+    </div>
+  );
+}
+
 function DropZone({ onOpen, onDropPath, loading }: { onOpen: () => void; onDropPath: (path: string) => void; loading: boolean }) {
   const [over, setOver] = useState(false);
   function drop(event: DragEvent) {
@@ -145,6 +248,8 @@ export default function VideoEditor() {
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
   const [current, setCurrent] = useState(0);
+  const [blur, setBlur] = useState<BlurRegion[]>([]);
+  const [drawing, setDrawing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const player = useRef<HTMLVideoElement>(null);
@@ -181,6 +286,8 @@ export default function VideoEditor() {
     setStart(0);
     setEnd(loaded.duration);
     setCurrent(0);
+    setBlur([]);
+    setDrawing(false);
     // Files without video can only be exported as audio, and files without audio not as audio.
     const kind = settings && FORMATS[settings.format].kind;
     if (!loaded.video && kind !== "audio") selectKind("audio");
@@ -221,7 +328,7 @@ export default function VideoEditor() {
     if (!file || !settings) return;
     setError(null);
     try {
-      setJob(await call<ExportJob>("export", { path: file.path, start, end, settings }));
+      setJob(await call<ExportJob>("export", { path: file.path, start, end, settings, blur }));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -237,11 +344,15 @@ export default function VideoEditor() {
 
   // Without compression the video is copied as is when the format allows it; say when it cannot be.
   let compressionHint = COMPRESSION_HINTS[settings.compression];
-  if (file && kind === "video" && settings.compression === "none" && !canCopy(settings, file)) {
-    compressionHint = settings.maxSize
-      ? "Changing the resolution needs re-encoding: the video will be re-encoded at high quality."
-      : `This video's codecs cannot be copied into ${FORMATS[settings.format].label} as they are, so it will be re-encoded at high quality.`;
+  if (file && kind === "video" && settings.compression === "none" && (blur.length || !canCopy(settings, file))) {
+    compressionHint = blur.length
+      ? "Blurring needs re-encoding: the video will be re-encoded at high quality."
+      : settings.maxSize
+        ? "Changing the resolution needs re-encoding: the video will be re-encoded at high quality."
+        : `This video's codecs cannot be copied into ${FORMATS[settings.format].label} as they are, so it will be re-encoded at high quality.`;
   }
+  const updateBlur = (index: number, changes: Partial<BlurRegion>) =>
+    setBlur((regions) => regions.map((region, i) => (i === index ? { ...region, ...changes } : region)));
   const details = file && [
     formatTime(file.duration),
     file.video && `${file.video.width}x${file.video.height} ${file.video.codec}`,
@@ -253,8 +364,8 @@ export default function VideoEditor() {
     <div className="max-w-2xl">
       <h2 className="text-2xl font-bold">Video Editor</h2>
       <p className="mt-1 mb-8 text-sm text-gray-500">
-        Trim a video, remove its audio or keep only the audio, and compress it to make the file smaller. The
-        original file is never changed.
+        Trim a video, blur parts of the frame, remove its audio or keep only the audio, and compress it to make
+        the file smaller. The original file is never changed.
       </p>
 
       {!file ? (
@@ -268,14 +379,31 @@ export default function VideoEditor() {
             </button>
           </div>
           {file.video ? (
-            <video
-              ref={player}
-              src={file.previewUrl}
-              controls
-              className="max-h-80 w-full rounded-md bg-black"
-              onTimeUpdate={onTimeUpdate}
-              onSeeked={onTimeUpdate}
-            />
+            <div className="relative">
+              <video
+                ref={player}
+                src={file.previewUrl}
+                controls
+                className="block max-h-80 w-full rounded-md bg-black"
+                onTimeUpdate={onTimeUpdate}
+                onSeeked={onTimeUpdate}
+              />
+              {kind !== "audio" && (
+                <BlurOverlay
+                  video={player}
+                  frame={file.video}
+                  regions={blur}
+                  current={current}
+                  drawing={drawing}
+                  disabled={running}
+                  onDraw={(box) => {
+                    setBlur((regions) => [...regions, { ...box, start: 0, end: file.duration }]);
+                    setDrawing(false);
+                  }}
+                  onRemove={(index) => setBlur((regions) => regions.filter((_, i) => i !== index))}
+                />
+              )}
+            </div>
           ) : (
             <audio ref={player as never} src={file.previewUrl} controls className="w-full" onTimeUpdate={onTimeUpdate} />
           )}
@@ -308,6 +436,46 @@ export default function VideoEditor() {
                 </>
               )}
             </FieldHint>
+
+            {file.video && kind !== "audio" && (
+              <>
+                <Field label="Blur">
+                  <button type="button" className={secondaryButtonClass} disabled={running} onClick={() => setDrawing(!drawing)}>
+                    {drawing ? "Cancel" : "Add area"}
+                  </button>
+                  {blur.length > 0 && !drawing && (
+                    <button type="button" className="text-sm text-gray-500 hover:underline" disabled={running} onClick={() => setBlur([])}>
+                      Remove all
+                    </button>
+                  )}
+                </Field>
+                <FieldHint>
+                  {drawing
+                    ? "Drag over the video to choose the area to blur."
+                    : "Hides parts of the frame, like names or passwords. An area is blurred for the whole video; change its times to blur it only while something is on screen."}
+                </FieldHint>
+                {blur.map((region, i) => (
+                  <Field key={i} label={`Area ${i + 1}`}>
+                    <TimeInput value={region.start} max={region.end - 0.1} disabled={running} onChange={(value) => updateBlur(i, { start: value })} />
+                    <span className="text-sm text-gray-500">to</span>
+                    <TimeInput
+                      value={region.end}
+                      max={file.duration}
+                      disabled={running}
+                      onChange={(value) => updateBlur(i, { end: Math.max(region.start + 0.1, value) })}
+                    />
+                    <button
+                      type="button"
+                      className="text-sm text-gray-500 hover:underline"
+                      disabled={running}
+                      onClick={() => setBlur((regions) => regions.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  </Field>
+                ))}
+              </>
+            )}
 
             <Field label="Output">
               <Segmented
