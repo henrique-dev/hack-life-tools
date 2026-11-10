@@ -97,7 +97,7 @@ export default function ScreenRecorder() {
   const locked = status.state !== "idle" || busy;
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <h2 className="text-2xl font-bold">Screen Recorder</h2>
       <p className="mt-1 mb-8 text-sm text-gray-500">
         Record a screen or a single window, optionally with audio. While recording, this window is minimized and a

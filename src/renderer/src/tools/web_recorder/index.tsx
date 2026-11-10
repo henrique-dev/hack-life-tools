@@ -239,7 +239,7 @@ export default function WebRecorder() {
   const [width, height] = RESOLUTIONS[settings.resolution];
 
   return (
-    <div className="max-w-3xl">
+    <div className="w-full">
       <h2 className="text-2xl font-bold">Web Recorder</h2>
       <p className="mt-1 mb-6 text-sm text-gray-500">
         Records a presentation of a web app: write the steps (open a page, click, type, scroll, show captions) and the

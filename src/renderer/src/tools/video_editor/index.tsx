@@ -367,7 +367,7 @@ export default function VideoEditor() {
   ].filter(Boolean).join(" · ");
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <h2 className="text-2xl font-bold">Video Editor</h2>
       <p className="mt-1 mb-8 text-sm text-gray-500">
         Trim a video, blur parts of the frame, remove its audio or keep only the audio, and compress it to make

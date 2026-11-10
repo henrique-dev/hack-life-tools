@@ -100,7 +100,7 @@ export default function AndroidRecorder() {
   const selected = devices.find((device) => device.serial === settings.serial);
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <h2 className="text-2xl font-bold">Android Recorder</h2>
       <p className="mt-1 mb-8 text-sm text-gray-500">
         Record the screen of an Android phone connected by USB, optionally with its audio (Android 11+). Uses{" "}

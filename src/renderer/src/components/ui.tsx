@@ -5,7 +5,8 @@ export const inputBaseClass =
   "rounded-md border border-gray-300 bg-white px-3 py-2 text-sm disabled:opacity-50 " +
   "dark:border-gray-700 dark:bg-gray-900";
 
-export const inputClass = `${inputBaseClass} w-80`;
+/** Fills the rest of its row (e.g. next to a button in a Field). */
+export const inputClass = `${inputBaseClass} min-w-0 flex-1`;
 
 export const secondaryButtonClass =
   "rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 " +

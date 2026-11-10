@@ -226,7 +226,7 @@ export default function VideoDownloader() {
   const hasFinished = jobs.some((job) => !ACTIVE_STATES.includes(job.state));
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <h2 className="text-2xl font-bold">Video Downloader</h2>
       <p className="mt-1 mb-2 text-sm text-gray-500">
         Download videos or just their audio from YouTube and thousands of other sites, using yt-dlp.

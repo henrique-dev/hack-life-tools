@@ -398,7 +398,7 @@ export default function ImageConverter() {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <h2 className="text-2xl font-bold">Image Converter</h2>
       <p className="mt-1 mb-8 text-sm text-gray-500">
         Convert images between JPEG, PNG, WebP, AVIF and GIF, and compress or resize them to make the files smaller. The
