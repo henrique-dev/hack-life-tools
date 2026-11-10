@@ -24,6 +24,14 @@ const CONTENT_TYPES: Record<string, string> = {
   ".ogg": "audio/ogg",
   ".opus": "audio/ogg",
   ".flac": "audio/flac",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".jfif": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
 };
 
 /** Must run before the app is ready. */
@@ -68,6 +76,10 @@ async function serve(request: Request) {
   }
   return new Response(body(start, end), {
     status: 206,
-    headers: { ...headers, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}` },
+    headers: {
+      ...headers,
+      "Content-Length": String(end - start + 1),
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+    },
   });
 }

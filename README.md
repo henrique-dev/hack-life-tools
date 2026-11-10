@@ -5,8 +5,8 @@ A collection of small everyday desktop tools for Windows, macOS and Linux, built
 
 ## Running
 
-Requires [Node.js](https://nodejs.org/) (22 or newer). Nothing else: `npm install` downloads Electron
-and ffmpeg for your platform.
+Requires [Node.js](https://nodejs.org/) (22 or newer). Nothing else: `npm install` downloads Electron,
+ffmpeg and sharp for your platform.
 
 ```sh
 git clone <repo url>
@@ -21,6 +21,17 @@ Or use the launcher, which installs the dependencies when needed:
 | --- | --- | --- |
 | Windows | double-click `run.bat` | `run.bat dev` |
 | macOS / Linux | `sh run.sh` | `sh run.sh dev` |
+
+### Updates
+
+The app checks at startup and every 30 minutes whether the branch it runs from (e.g. `main`) has new
+commits on the remote. If so, a bar at the top of the window shows how many, with an **Update** button;
+the bottom of the sidebar shows the version, branch and commit, and **Check for updates** checks again.
+
+**Update** fast-forwards the branch (`git merge --ff-only`), so local work is never lost: if the folder
+has local changes to the updated files, or commits that are not pushed, it says so and changes nothing.
+**Restart now** then starts the app again through the launcher, which installs new dependencies and
+rebuilds. Requires git; nothing is shown for a copy that is not a git clone.
 
 ### Chrome extension
 
@@ -122,7 +133,8 @@ Edits and converts a video or audio file with ffmpeg. The original is never chan
 as a new file (`name_edited.mp4`, `name.gif`, `name.mp3`, ...) next to it or in a folder you choose.
 
 - **Open** a file with the button or by dropping it on the window. A player previews it.
-- **Trim**: set the start and end, typing a time or using the player's current position.
+- **Length**: export the **whole video**, or choose **Trim** to show the start and end, typed or taken from the
+  player's current position.
 - **Blur** parts of the frame (names, passwords, ...): click **Add area** and drag over the video. The
   player previews the blur. An area is blurred for the whole video unless you change its times. Blurring
   needs re-encoding, so the streams are never just copied.
@@ -146,6 +158,33 @@ as a new file (`name_edited.mp4`, `name.gif`, `name.mp3`, ...) next to it or in 
 - GIFs use a palette built from the clip for better colors. They get large quickly, so keep clips short
   or lower the frame rate and width; the tool warns for long selections.
 
+### Image Converter
+
+Converts images between JPEG, PNG, WebP, AVIF and GIF, and compresses or resizes them, using
+[sharp](https://sharp.pixelplumbing.com/) (libvips). The originals are never changed: results are saved as new
+files (`name.webp`, or `name_compressed.jpg` when the format stays the same) next to them or in a folder you choose.
+
+- **Open** several images at once (JPEG, PNG, WebP, AVIF, GIF, TIFF, SVG) or drop them on the window. Click one to
+  compare the original with the result side by side, at **Fit** or **100%** (both scroll together). The result and
+  its size update as you change the settings.
+- **Format**: keep each image's format (TIFF and SVG become PNG) or convert all to one. Transparent areas become white
+  in JPEG. Animated GIF and WebP stay animated in WebP and GIF; other formats keep the first frame.
+- **Compress**:
+
+  | | JPEG / WebP / AVIF | PNG | GIF |
+  | --- | --- | --- | --- |
+  | None | highest quality (WebP is lossless from PNG, GIF, TIFF, SVG) | lossless | 256 colors |
+  | Light / Medium / Strong | lower quality | reduced to a palette of 256 or 128 colors (like TinyPNG) | fewer colors |
+  | Target size | highest quality under the size in KB, then smaller dimensions if needed | not available | not available |
+
+  JPEG uses mozjpeg, which makes files about 10% smaller than standard JPEG at the same quality.
+- **Max size**: limits the longest side (3840 to 800 px); smaller images are never enlarged.
+- **Metadata** (camera, date, GPS location) is removed unless you choose to keep it. Photos are rotated according to
+  their EXIF orientation first, so they still display upright.
+
+iPhone HEIC photos are not supported (sharp's prebuilt libraries only decode AVIF among HEIF images). Export them as
+JPEG from the phone (Settings > Camera > Formats > Most Compatible) or convert them first.
+
 ### iPhone / iPad
 
 There is no tool for iOS: Apple offers nothing like scrcpy for recording from a computer. Options:
@@ -165,6 +204,7 @@ There is no tool for iOS: Apple offers nothing like scrcpy for recording from a 
 src/
   main/                         Electron main process
     index.ts                    main window, IPC
+    updater.ts                  checks the git branch for new commits, updates, restarts
     host.ts                     services for tools: extra windows, folder picker, events
     lib/                        shared helpers (ffmpeg runner and file probing, media://
                                 protocol for local previews, processes, recording status, utils)
@@ -174,11 +214,12 @@ src/
       android_recorder/         scrcpy detection, devices, recording
       video_downloader/         yt-dlp install/update, download queue
       video_editor/             export commands; formats.ts (output formats, also used by the UI)
+      image_converter/          conversion with sharp; formats.ts (output formats, also used by the UI)
   preload/index.ts              exposes window.api to the UI
   renderer/                     React + Tailwind UI
     src/api.ts                  callTool(), onToolEvent()
     src/App.tsx                 sidebar + active tool
-    src/components/             shared UI: form fields, recording controls and status
+    src/components/             shared UI: form fields, recording controls and status, update bar
     src/tools/screen_recorder/
       index.tsx                 main screen
       windows/overlay.tsx       floating timer with stop button
@@ -188,6 +229,8 @@ src/
     src/tools/video_downloader/
       index.tsx                 main screen
     src/tools/video_editor/
+      index.tsx                 main screen
+    src/tools/image_converter/
       index.tsx                 main screen
 ```
 

@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("tool:event", handler);
     return () => ipcRenderer.removeListener("tool:event", handler);
   },
+  checkForUpdates: () => ipcRenderer.invoke("app:checkForUpdates"),
+  applyUpdate: () => ipcRenderer.invoke("app:applyUpdate"),
+  restart: () => ipcRenderer.invoke("app:restart"),
   // Path of a file dropped on the page or chosen in an <input type="file">.
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 });

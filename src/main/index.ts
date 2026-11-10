@@ -3,6 +3,7 @@ import { Host, loadRoute, preloadPath } from "./host";
 import { handleMediaProtocol, registerMediaScheme } from "./lib/media";
 import { tools } from "./tools";
 import type { ToolApi } from "./tools/types";
+import { applyUpdate, checkForUpdates, launchAgain } from "./updater";
 
 // On Wayland, screen capture goes through the desktop portal and PipeWire.
 if (process.platform === "linux") {
@@ -37,6 +38,14 @@ ipcMain.handle("tool:call", (_event, toolId: string, method: string, args: unkno
     throw new Error(`Invalid method "${method}".`);
   }
   return fn.apply(api, args);
+});
+
+ipcMain.handle("app:checkForUpdates", () => checkForUpdates());
+ipcMain.handle("app:applyUpdate", () => applyUpdate());
+ipcMain.handle("app:restart", () => {
+  launchAgain();
+  // Same as closing the window: tools finish (e.g. save a recording), then the app quits.
+  mainWindow?.close();
 });
 
 function createMainWindow() {

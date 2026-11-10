@@ -247,6 +247,8 @@ export default function VideoEditor() {
   const [file, setFile] = useState<LoadedFile | null>(null);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
+  // Off: the whole file is exported and the trim controls are hidden (start and end are kept for when it is on again).
+  const [trimming, setTrimming] = useState(false);
   const [current, setCurrent] = useState(0);
   const [blur, setBlur] = useState<BlurRegion[]>([]);
   const [drawing, setDrawing] = useState(false);
@@ -285,6 +287,7 @@ export default function VideoEditor() {
     setFile(loaded);
     setStart(0);
     setEnd(loaded.duration);
+    setTrimming(false);
     setCurrent(0);
     setBlur([]);
     setDrawing(false);
@@ -328,7 +331,7 @@ export default function VideoEditor() {
     if (!file || !settings) return;
     setError(null);
     try {
-      setJob(await call<ExportJob>("export", { path: file.path, start, end, settings, blur }));
+      setJob(await call<ExportJob>("export", { path: file.path, start: from, end: to, settings, blur }));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -339,7 +342,10 @@ export default function VideoEditor() {
   }
 
   const running = job.state === "running";
-  const length = end - start;
+  // The part exported: the selection while trimming, otherwise the whole file.
+  const from = trimming ? start : 0;
+  const to = trimming ? end : (file?.duration ?? 0);
+  const length = to - from;
   const kind = FORMATS[settings.format].kind;
 
   // Without compression the video is copied as is when the format allows it; say when it cannot be.
@@ -408,34 +414,49 @@ export default function VideoEditor() {
             <audio ref={player as never} src={file.previewUrl} controls className="w-full" onTimeUpdate={onTimeUpdate} />
           )}
           <p className="mt-1 text-xs text-gray-500">{details}</p>
-          <Timeline duration={file.duration} start={start} end={end} current={current} />
+          <Timeline duration={file.duration} start={from} end={to} current={current} />
 
           <div className="mt-6 flex flex-col gap-4">
-            <Field label="Start">
-              <TimeInput value={start} max={end - 0.1} disabled={running} onChange={setStart} />
-              <button type="button" className={secondaryButtonClass} disabled={running || current >= end} onClick={() => setStart(current)}>
-                Set to current
-              </button>
+            <Field label="Length">
+              <Segmented
+                options={[
+                  { value: "whole", label: file.video ? "Whole video" : "Whole file" },
+                  { value: "trim", label: "Trim" },
+                ]}
+                value={trimming ? "trim" : "whole"}
+                disabled={running}
+                onChange={(value) => setTrimming(value === "trim")}
+              />
             </Field>
-            <Field label="End">
-              <TimeInput value={end} max={file.duration} disabled={running} onChange={(value) => setEnd(Math.max(start + 0.1, value))} />
-              <button type="button" className={secondaryButtonClass} disabled={running || current <= start} onClick={() => setEnd(current)}>
-                Set to current
-              </button>
-            </Field>
-            <FieldHint>
-              Selection: {formatTime(length)}
-              {(start > 0 || end < file.duration) && (
-                <>
-                  {" · "}
-                  <button type="button" className="text-blue-600 hover:underline" onClick={playSelection}>Play selection</button>
-                  {" · "}
-                  <button type="button" className="text-blue-600 hover:underline" disabled={running} onClick={() => { setStart(0); setEnd(file.duration); }}>
-                    Reset
+            {trimming && (
+              <>
+                <Field label="Start">
+                  <TimeInput value={start} max={end - 0.1} disabled={running} onChange={setStart} />
+                  <button type="button" className={secondaryButtonClass} disabled={running || current >= end} onClick={() => setStart(current)}>
+                    Set to current
                   </button>
-                </>
-              )}
-            </FieldHint>
+                </Field>
+                <Field label="End">
+                  <TimeInput value={end} max={file.duration} disabled={running} onChange={(value) => setEnd(Math.max(start + 0.1, value))} />
+                  <button type="button" className={secondaryButtonClass} disabled={running || current <= start} onClick={() => setEnd(current)}>
+                    Set to current
+                  </button>
+                </Field>
+                <FieldHint>
+                  Selection: {formatTime(length)}
+                  {(start > 0 || end < file.duration) && (
+                    <>
+                      {" · "}
+                      <button type="button" className="text-blue-600 hover:underline" onClick={playSelection}>Play selection</button>
+                      {" · "}
+                      <button type="button" className="text-blue-600 hover:underline" disabled={running} onClick={() => { setStart(0); setEnd(file.duration); }}>
+                        Reset
+                      </button>
+                    </>
+                  )}
+                </FieldHint>
+              </>
+            )}
 
             {file.video && kind !== "audio" && (
               <>

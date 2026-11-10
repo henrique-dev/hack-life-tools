@@ -33,6 +33,16 @@ export class Host {
     return result.canceled ? null : result.filePaths[0];
   }
 
+  /** Show a file picker that allows several files; returns the chosen paths (none if cancelled). */
+  async pickFiles(filters: FileFilter[], defaultPath?: string): Promise<string[]> {
+    const result = await dialog.showOpenDialog(this.mainWindow, {
+      defaultPath,
+      filters,
+      properties: ["openFile", "multiSelections"],
+    });
+    return result.canceled ? [] : result.filePaths;
+  }
+
   /** URL the UI can use to play a local file (see lib/media.ts). */
   mediaUrl(path: string) {
     return mediaUrl(path);
