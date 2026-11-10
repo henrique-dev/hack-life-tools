@@ -55,6 +55,15 @@ An Electron + React + Tailwind v4 app made of independent "tools", built with el
 - Images are processed with `sharp` (prebuilt libvips, N-API, so no Electron rebuild), with `sharp.cache(false)` so files
   are not kept open. `src/main/lib/ffmpeg.ts` / `probe.ts`: ffmpeg from `ffmpeg-static`. `process.ts`: `which()` (also searches
   WinGet/Homebrew/snap folders missing from PATH), `run()`, and `killTree()`.
+- Web Recorder (`src/main/tools/web_recorder/`): an offscreen `BrowserWindow` driven through `webContents.debugger`
+  (DevTools protocol). Input coordinates are CSS pixels of the page, already following the zoom. Functions in
+  `page.ts` are sent to the page as source text (`fn.toString()`), so they must be self-contained, and they avoid
+  `innerHTML`/`<style>` to work under strict CSP and Trusted Types. Frames from the `paint` event go to ffmpeg as
+  raw BGRA at a constant frame rate (`encoder.ts`). Its browser session is the persistent partition
+  `persist:web_recorder`, shared with the login window. The script language is documented for users in
+  `docs/web-recorder/README.md`: update it (and `COMMANDS` in `script.ts`) when commands or their rules change.
+- `host.emit()` only reaches the app's own windows (the main window and those from `host.openWindow()`), not windows
+  showing external sites.
 - `src/main/lib/recording.ts`: `RecordingStatus`, shared by the recorder tools and `src/renderer/src/components/recording.tsx`.
 - External binaries: yt-dlp is downloaded at runtime into `userData/bin` and verified against its SHA-256 sums; scrcpy
   must be installed by the user.

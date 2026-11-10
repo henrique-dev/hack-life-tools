@@ -1,0 +1,18 @@
+# Searches Wikipedia and walks through the article.
+# Works as is: a good first script to try Test run and Record.
+
+caption "Searching Wikipedia"
+goto https://en.wikipedia.org
+type input[name=search] "Electron (software framework)"
+press Enter
+wait-for #firstHeading
+
+caption "The article"
+highlight #firstHeading 2s
+caption off
+scroll down 800
+wait 1s
+scroll down 800
+wait 1s
+scroll top
+wait 2s

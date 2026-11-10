@@ -1,0 +1,30 @@
+# Template: a step-by-step tour of a feature, with numbered captions.
+# Assumes you are already logged in (use "Log in..." in the tool once).
+# Change the address and the targets to match your app.
+
+goto https://app.example.com/projects
+
+caption "1. Create a project"
+click text=New project
+wait-for #project-form
+type #project-name "Marketing site"
+select #template "Landing page"
+click text=Create
+wait-for text=Project created
+highlight text=Project created
+
+caption "2. Invite your team"
+click text=Share
+type [placeholder="Email address"] "ada@example.com"
+press Enter
+wait 1s
+
+caption "3. Find it again from anywhere"
+press Escape
+press Control+K
+type "Marketing"
+wait 1s
+press Enter
+
+caption off
+wait 2s

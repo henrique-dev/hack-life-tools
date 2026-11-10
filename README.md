@@ -185,6 +185,50 @@ files (`name.webp`, or `name_compressed.jpg` when the format stays the same) nex
 iPhone HEIC photos are not supported (sharp's prebuilt libraries only decode AVIF among HEIF images). Export them as
 JPEG from the phone (Settings > Camera > Formats > Most Compatible) or convert them first.
 
+### Web Recorder
+
+Records presentations of web apps. You write the steps in a simple script and the tool plays them in a
+built-in browser, saving what the page shows as an MP4 video (H.264), with a drawn mouse cursor and click
+effects.
+
+```
+caption "Creating a project"
+goto localhost:3000
+click text=New project
+type #name "Marketing site"
+select #template "Landing page"
+click "button[type=submit]"
+wait-for .project-header
+caption off
+highlight .project-header 2s
+scroll down 600
+wait 2s
+```
+
+- One command per line: `goto`, `click`, `hover`, `type`, `press`, `select`, `scroll`, `wait`, `wait-for`,
+  `highlight`, `caption` and `zoom`. **Script commands** in the tool lists them; the full guide, with recipes and
+  troubleshooting, is [docs/web-recorder](docs/web-recorder/README.md), and
+  [docs/web-recorder/examples](docs/web-recorder/examples/) has scripts to start from. Lines starting with `#` are
+  comments.
+- Elements are found by CSS selector (`#email`, `button.primary`) or by their text (`text=Sign in`, which also
+  matches placeholders and labels), and are waited for up to 10 seconds. Elements outside the screen are scrolled
+  to first.
+- The mouse and keyboard send real events, so hover effects, focus and shortcuts work. The cursor glides to each
+  element and text is typed one key at a time; **Pace** makes all of it slower or faster.
+- `caption "..."` shows a subtitle until the next caption or `caption off`; `highlight` dims the page around an
+  element for a moment.
+- The page is rendered offscreen at exactly the chosen resolution (720p, 1080p or 1440p, 30 or 60 FPS), so
+  nothing else on the screen appears in the video and the computer can be used meanwhile. The video starts once
+  the first page has loaded. **Test run** plays the script without saving, with a live preview.
+- Scripts can be saved as `.txt` files; the one being edited is also kept between sessions.
+- **Logins:** **Log in...** opens the script's first page in a normal window using the recorder's browser.
+  Log in there and close it: recordings reuse its cookies, so they start logged in. **Clear saved logins**
+  forgets them.
+- Not recorded: the page's sound, and native dropdown popups (`select` picks the option without opening the
+  list). `alert()` and similar dialogs are accepted automatically, and links that open a new tab open in the same
+  page. Elements inside iframes cannot be targeted. Some sites block automated or embedded browsers (e.g. Google
+  sign-in); log in with another method or record a local or staging copy.
+
 ### iPhone / iPad
 
 There is no tool for iOS: Apple offers nothing like scrcpy for recording from a computer. Options:
@@ -215,6 +259,9 @@ src/
       video_downloader/         yt-dlp install/update, download queue
       video_editor/             export commands; formats.ts (output formats, also used by the UI)
       image_converter/          conversion with sharp; formats.ts (output formats, also used by the UI)
+      web_recorder/             script.ts (script language, also used by the UI), driver.ts (offscreen
+                                browser driven by the DevTools protocol), page.ts (code run in the page:
+                                cursor, captions, finding elements), encoder.ts (frames to MP4)
   preload/index.ts              exposes window.api to the UI
   renderer/                     React + Tailwind UI
     src/api.ts                  callTool(), onToolEvent()
@@ -232,6 +279,8 @@ src/
       index.tsx                 main screen
     src/tools/image_converter/
       index.tsx                 main screen
+    src/tools/web_recorder/
+      index.tsx                 script editor, settings, preview
 ```
 
 ## Adding a tool

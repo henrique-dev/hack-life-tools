@@ -1,0 +1,28 @@
+# Template: log in to your app with a demo account and present the dashboard.
+# Change the address and the targets to match your app.
+#
+# If you log in with "Log in..." in the tool instead, delete the login steps:
+# the recording then starts already logged in.
+
+zoom 110%
+caption "Logging in"
+goto localhost:3000/login
+type #email "demo@example.com"
+type #password "demo-password"
+click text=Sign in
+wait-for .dashboard
+
+caption "Your dashboard at a glance"
+wait 1s
+highlight .summary-cards 2s
+hover .revenue-chart
+wait 1s
+
+caption "Filtering by period"
+click text=Last 30 days
+wait-for .revenue-chart
+highlight .revenue-chart 2s
+
+caption off
+scroll down 600
+wait 2s

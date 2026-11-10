@@ -16,7 +16,17 @@ export function loadRoute(window: BrowserWindow, route: string) {
 
 /** Services the app offers to the tools' APIs. */
 export class Host {
-  constructor(readonly mainWindow: BrowserWindow) {}
+  /** Windows showing the app's UI, which receive emit() events (not, e.g., windows showing other sites). */
+  private readonly appWindows = new Set<BrowserWindow>();
+
+  constructor(readonly mainWindow: BrowserWindow) {
+    this.track(mainWindow);
+  }
+
+  private track(window: BrowserWindow) {
+    this.appWindows.add(window);
+    window.on("closed", () => this.appWindows.delete(window));
+  }
 
   /** Show a folder picker and return the chosen path, or null if cancelled. */
   async pickFolder(initial: string): Promise<string | null> {
@@ -41,6 +51,12 @@ export class Host {
       properties: ["openFile", "multiSelections"],
     });
     return result.canceled ? [] : result.filePaths;
+  }
+
+  /** Show a save dialog and return the chosen path, or null if cancelled. */
+  async pickSaveFile(filters: FileFilter[], defaultPath?: string): Promise<string | null> {
+    const result = await dialog.showSaveDialog(this.mainWindow, { defaultPath, filters });
+    return result.canceled || !result.filePath ? null : result.filePath;
   }
 
   /** URL the UI can use to play a local file (see lib/media.ts). */
@@ -68,14 +84,15 @@ export class Host {
       ...options,
       webPreferences: { ...options.webPreferences, preload: preloadPath },
     });
+    this.track(window);
     loadRoute(window, route);
     return window;
   }
 
-  /** Send an event to every window. The UI listens with onToolEvent(). */
+  /** Send an event to every window of the app. The UI listens with onToolEvent(). */
   emit(toolId: string, event: string, payload?: unknown) {
-    for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send("tool:event", toolId, event, payload);
+    for (const window of this.appWindows) {
+      if (!window.isDestroyed()) window.webContents.send("tool:event", toolId, event, payload);
     }
   }
 }
