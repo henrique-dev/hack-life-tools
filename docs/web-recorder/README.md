@@ -292,6 +292,28 @@ highlight .revenue-chart 3s
 highlight text=Total
 ```
 
+### `if-visible <target> [timeout]` / `if-not-visible <target> [timeout]` / `end`
+
+Runs the lines up to the matching `end` only if an element is on the page, or only if it is not. For things that
+depend on the state of the app: a dialog that sometimes appears, an option remembered from a previous run.
+
+```
+if-visible text=Accept cookies 2s
+  click text=Accept cookies
+end
+
+if-not-visible .chart 1s
+  click text=Show chart
+end
+```
+
+- Without a timeout the page is checked once, right away. Give one when the element may still be loading: unlike
+  other commands, these do not wait 10 seconds. Both wait up to the timeout for the element to appear, so
+  `if-not-visible` only runs its block after the whole timeout has passed.
+- Hidden elements count as not visible.
+- A condition that is not met is not an error: the script continues after the `end`.
+- Blocks can be nested. Indentation is optional. There is no `else`: use the opposite command in a second block.
+
 ### `caption "text"` / `caption off`
 
 Shows a subtitle at the bottom of the video. It stays, also across page changes, until the next `caption` or

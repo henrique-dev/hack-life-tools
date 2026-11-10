@@ -202,6 +202,20 @@ export class PageDriver {
     }
   }
 
+  /** Whether an element is on the page, looking for it up to timeoutMs (once, when 0). */
+  async isVisible(target: string, timeoutMs: number) {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      this.check();
+      // Fails while the page is navigating: try again.
+      const found = await this.eval(page.findTarget, target).catch(() => null);
+      if (found && "error" in found) throw new Error(found.error);
+      if (found) return true;
+      if (Date.now() >= end) return false;
+      await this.wait(POLL_MS);
+    }
+  }
+
   private check() {
     if (this.options.signal.aborted) throw new CanceledError();
   }
