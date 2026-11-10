@@ -12,6 +12,8 @@ const LOAD_TIMEOUT = 30_000;
 const POLL_MS = 120;
 const MOVE_FRAME_MS = 16;
 const TYPE_DELAY_MS = 75;
+/** Editing shortcuts: Chrome runs them only when the key event names the command (they do nothing on Linux otherwise). */
+const EDIT_COMMANDS: Record<string, string> = { a: "selectAll", c: "copy", x: "cut", v: "paste", z: "undo", y: "redo" };
 
 let configured: Session | null = null;
 
@@ -139,6 +141,12 @@ export class PageDriver {
     switch (command.kind) {
       case "goto":
         return this.goto(command.url);
+      case "follow": {
+        await this.pointAt(command.target);
+        const url = await this.eval(page.targetAddress);
+        if (!url) throw new Error(`"${command.target}" has no address to open.`);
+        return this.goto(url);
+      }
       case "wait":
         return this.wait(command.ms);
       case "waitFor":
@@ -146,10 +154,9 @@ export class PageDriver {
         return;
       case "click":
         return this.click(command.target);
-      case "hover": {
-        const rect = await this.reveal(command.target);
-        return this.moveTo(rect.x + rect.width / 2, rect.y + rect.height / 2);
-      }
+      case "hover":
+        await this.pointAt(command.target);
+        return;
       case "type":
         if (command.target) {
           await this.click(command.target);
@@ -160,10 +167,7 @@ export class PageDriver {
         await this.press(parseKeys(command.keys)!);
         return this.settle();
       case "select": {
-        const rect = await this.reveal(command.target);
-        const x = rect.x + rect.width / 2;
-        const y = rect.y + rect.height / 2;
-        await this.moveTo(x, y);
+        const { x, y } = await this.pointAt(command.target);
         // Without a real click: the list's popup is not drawn offscreen.
         await this.eval(page.overlay, "ripple", [x, y]);
         const error = await this.eval(page.selectOption, command.option);
@@ -339,10 +343,37 @@ export class PageDriver {
     }
   }
 
+  /**
+   * Move the cursor to the middle of an element and return that point. The page may still be moving (content that
+   * loads above it, a list that sorts itself or is drawn again), so the cursor follows the element until it is still
+   * under it.
+   */
+  private async pointAt(target: string) {
+    let rect = await this.reveal(target);
+    for (let attempt = 1; ; attempt++) {
+      const x = rect.x + rect.width / 2;
+      const y = rect.y + rect.height / 2;
+      await this.moveTo(x, y);
+      await this.pause(120);
+      const now = await this.eval(page.targetRect).catch(() => null);
+      if (now && x >= now.x && x <= now.x + now.width && y >= now.y && y <= now.y + now.height) return { x, y };
+      if (attempt === 5) throw new Error(`"${target}" kept moving on the page.`);
+      // Drawn again (a list that reloaded): find it once more.
+      if (!now) {
+        rect = await this.reveal(target);
+        continue;
+      }
+      rect = now;
+      const inView = rect.y >= 0 && rect.y + rect.height <= this.options.height / this.zoom;
+      if (!inView) {
+        await this.eval(page.scrollTargetIntoView);
+        rect = (await this.waitForStill()) ?? rect;
+      }
+    }
+  }
+
   private async click(target: string) {
-    const rect = await this.reveal(target);
-    await this.moveTo(rect.x + rect.width / 2, rect.y + rect.height / 2);
-    await this.pause(120);
+    await this.pointAt(target);
     const at = { ...this.mouse, button: "left", clickCount: 1 };
     await this.input("Input.dispatchMouseEvent", { type: "mousePressed", ...at, buttons: 1 });
     await sleep(70);
@@ -352,13 +383,9 @@ export class PageDriver {
 
   /** Press on an element, move with the button down and release, as real mouse events. */
   private async drag(target: string, to: string | { x: number; y: number }) {
-    const rect = await this.reveal(target);
-    const x = rect.x + rect.width / 2;
-    const y = rect.y + rect.height / 2;
-    await this.moveTo(x, y);
+    const { x, y } = await this.pointAt(target);
     // Before pressing: scrolling with the button down would drag something else.
     const end = typeof to === "string" ? await this.dropPoint(to) : { x: x + to.x, y: y + to.y };
-    await this.pause(120);
     await this.input("Input.dispatchMouseEvent", {
       type: "mousePressed",
       ...this.mouse,
@@ -390,10 +417,7 @@ export class PageDriver {
     const paths = await Promise.all(files.map((file) => this.resolveFile(file)));
     const direct = await this.eval(page.findFileInput, target).catch(() => false);
     if (target && !direct) {
-      const rect = await this.reveal(target);
-      const x = rect.x + rect.width / 2;
-      const y = rect.y + rect.height / 2;
-      await this.moveTo(x, y);
+      const { x, y } = await this.pointAt(target);
       await this.eval(page.overlay, "ripple", [x, y]);
       if (!(await this.eval(page.findFileInputOfTarget))) throw new Error(`"${target}" has no file field.`);
     } else if (!direct) {
@@ -430,11 +454,14 @@ export class PageDriver {
       nativeVirtualKeyCode: key.keyCode,
       modifiers: key.modifiers,
     };
+    // Control (2) or Meta (4) with a letter of an editing shortcut.
+    const command = key.modifiers & 6 ? EDIT_COMMANDS[key.key.toLowerCase()] : undefined;
     await this.input("Input.dispatchKeyEvent", {
       type: key.text ? "keyDown" : "rawKeyDown",
       ...event,
       text: key.text,
       unmodifiedText: key.text,
+      ...(command ? { commands: [command] } : {}),
     });
     await this.input("Input.dispatchKeyEvent", { type: "keyUp", ...event });
   }

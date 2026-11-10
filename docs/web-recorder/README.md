@@ -53,6 +53,19 @@ after the last step.
 - **The script must open a page with `goto`** before any command that uses the page (`click`, `type`, `scroll`,
   ...). Only `caption`, `zoom` and `wait` can come before it.
 
+### Dates relative to today
+
+`{today}`, `{today-1}` and `{today+7}` become dates counted from the day the script runs, so a script that picks a
+day or fills a date keeps working tomorrow. They work anywhere on a line, also inside quotes and selectors.
+
+```
+click [data-date="{today-1}"]
+type #due "{today+7:dd/MM/yyyy}"
+```
+
+The default format is `2026-11-09` (`yyyy-MM-dd`). Another one goes after a colon, with `yyyy`, `MM`, `dd` (with a
+leading zero), `M` and `d` (without).
+
 ## Targets: pointing at elements
 
 Most commands act on an element of the page, called the *target*. A target is either a CSS selector or a text to
@@ -105,6 +118,21 @@ hover text=Settings
 Text targets are easy to read and survive most page changes. They become ambiguous when the same text appears
 several times; then use a CSS selector, or a longer, more specific text.
 
+### Near another element: `A >> B`
+
+When the same button appears several times, point at the one near something unique. `A >> B` finds B inside A or,
+if A has none, inside the smallest block of the page around A that has one: an option of an open list, the Edit
+button of the section titled "Address", the delete button of the row of "Ada Lovelace".
+
+```
+click text=Address >> text=Edit
+click "[role=listbox] >> text=Brazil"
+click text=Ada Lovelace >> [aria-label="Delete"]
+type "text=Billing >> input[name=zip]" "01310-100"
+```
+
+Each side is a CSS selector or `text=`, and more parts can follow (`A >> B >> C`). Spaces around `>>` are required.
+
 ### Targets with spaces
 
 For commands whose only argument is the target (`click`, `hover`, `scroll to`), quotes are optional:
@@ -132,6 +160,16 @@ goto 127.0.0.1:8080/dashboard
 
 Without `http://` or `https://`, local addresses (`localhost`, `127.0.0.1`) get `http://` and others `https://`.
 `open` is the same command.
+
+### `follow <target>`
+
+Opens the address of an element: the link it is or contains, or the address written in a field, such as the share
+link of a document that the page shows in a read-only box. The cursor moves to it first.
+
+```
+follow input[readonly]
+follow text=Public page
+```
 
 ### `click <target>`
 

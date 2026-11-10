@@ -6,6 +6,7 @@
 
 export type Command =
   | { kind: "goto"; url: string }
+  | { kind: "follow"; target: string }
   | { kind: "wait"; ms: number }
   | { kind: "waitFor"; target: string; timeoutMs: number | null }
   | { kind: "click"; target: string }
@@ -47,6 +48,7 @@ const MAX_ZOOM = 5;
 
 /** Commands that need a page, so they must come after the first goto. */
 const PAGE_COMMANDS = new Set<Command["kind"]>([
+  "follow",
   "waitFor",
   "click",
   "hover",
@@ -65,6 +67,10 @@ const PAGE_COMMANDS = new Set<Command["kind"]>([
 /** For the help in the UI. */
 export const COMMANDS: { syntax: string; description: string }[] = [
   { syntax: "goto <url>", description: "Open a page. Local apps work too: goto localhost:3000." },
+  {
+    syntax: "follow <target>",
+    description: "Open the address of a link, or the one written in a field (e.g. a share link).",
+  },
   { syntax: "click <target>", description: "Move the cursor to the element and click it." },
   { syntax: "hover <target>", description: "Move the cursor over the element (shows menus and tooltips)." },
   { syntax: 'type <target> "text"', description: "Click a field and type into it, one key at a time." },
@@ -248,6 +254,28 @@ interface Token {
   quoted: boolean;
 }
 
+/**
+ * Dates relative to the day the script runs: {today}, {today-1}, {today+7}, as 2026-11-09, or with a format of yyyy,
+ * MM, dd, M and d, e.g. {today-1:dd/MM/yyyy}. So scripts that pick a day keep working on other days.
+ */
+export function expandDates(value: string, now = new Date()): string {
+  return value.replace(/\{today(?:([+-])(\d+))?(?::([^}]+))?\}/g, (_match, sign, days, pattern) => {
+    const date = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + (sign === "-" ? -1 : 1) * Number(days ?? 0),
+    );
+    const parts: Record<string, string> = {
+      yyyy: String(date.getFullYear()),
+      MM: String(date.getMonth() + 1).padStart(2, "0"),
+      dd: String(date.getDate()).padStart(2, "0"),
+      M: String(date.getMonth() + 1),
+      d: String(date.getDate()),
+    };
+    return (pattern ?? "yyyy-MM-dd").replace(/yyyy|MM|dd|M|d/g, (token: string) => parts[token]);
+  });
+}
+
 function tokenize(line: string): Token[] | string {
   const tokens: Token[] = [];
   let i = 0;
@@ -267,11 +295,11 @@ function tokenize(line: string): Token[] | string {
         } else value += line[i];
       }
       if (!closed) return "A quote is not closed.";
-      tokens.push({ value, quoted: true });
+      tokens.push({ value: expandDates(value), quoted: true });
     } else {
       let value = "";
       while (i < line.length && !/\s/.test(line[i])) value += line[i++];
-      tokens.push({ value, quoted: false });
+      tokens.push({ value: expandDates(value), quoted: false });
     }
   }
   return tokens;
@@ -320,6 +348,10 @@ function parseCommand(tokens: Token[]): Command | string {
       if (args.length !== 1) return "Write the address after goto, e.g. goto https://example.com.";
       const url = normalizeUrl(args[0].value);
       return url ? { kind: "goto", url } : `"${args[0].value}" is not a valid address.`;
+    }
+    case "follow": {
+      const target = needTarget(args);
+      return target ? { kind: "follow", target } : "Write which link to open, e.g. follow #share-link.";
     }
     case "wait":
     case "pause": {

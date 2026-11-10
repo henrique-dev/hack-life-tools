@@ -130,8 +130,9 @@ export function overlay(method: string, args: unknown[]) {
 }
 
 /**
- * Find the first visible element matching a CSS selector or "text=...", remember it
- * for the next calls (targetRect, selectOption, ...) and return where it is.
+ * Find the first visible element matching a CSS selector or "text=...", remember it for the next calls (targetRect,
+ * selectOption, ...) and return where it is. "A >> B" is the B nearest to A: the first one inside A, or else inside the
+ * smallest block around A that has one, e.g. the Edit button of the section whose title is A.
  */
 export function findTarget(selector: string): FindResult {
   const w = window as any;
@@ -140,26 +141,34 @@ export function findTarget(selector: string): FindResult {
     if (rect.width <= 0 || rect.height <= 0) return false;
     return (element as any).checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) !== false;
   };
-  let target: Element | null = null;
+  const normalize = (text: string | null | undefined) => (text ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  const clickable =
+    "a, button, input, textarea, select, label, summary, [role=button], [role=link], [role=tab], [role=menuitem], " +
+    "[role=option], [role=checkbox], [role=radio], [onclick]";
 
-  if (/^text=/i.test(selector)) {
-    const normalize = (text: string | null | undefined) => (text ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-    const wanted = normalize(selector.slice(5));
-    if (!wanted) return { error: "Write some text after text=." };
+  // The visible elements matching one part, inside root, the best ones first. A string is an error.
+  const matchAll = (part: string, root: Element): Element[] | string => {
+    if (!/^text=/i.test(part)) {
+      try {
+        return [...root.querySelectorAll(part)].filter(visible);
+      } catch {
+        return `"${part}" is not a valid CSS selector. For text, write text=${part}.`;
+      }
+    }
+    const wanted = normalize(part.slice(5));
+    if (!wanted) return "Write some text after text=.";
     const exact: Element[] = [];
     const partial: Element[] = [];
     const add = (element: Element | null, text: string | null | undefined) => {
       const normalized = normalize(text);
       if (element && normalized.includes(wanted)) (normalized === wanted ? exact : partial).push(element);
     };
-    const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const parent = node.parentElement;
       if (parent && !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(parent.tagName)) add(parent, node.nodeValue);
     }
-    for (const element of document.querySelectorAll(
-      "input, textarea, button, select, [aria-label], [title], img[alt]",
-    )) {
+    for (const element of root.querySelectorAll("input, textarea, button, select, [aria-label], [title], img[alt]")) {
       for (const attribute of ["aria-label", "placeholder", "title", "alt"])
         add(element, element.getAttribute(attribute));
       if (element instanceof HTMLInputElement && /^(button|submit|reset)$/.test(element.type))
@@ -167,32 +176,33 @@ export function findTarget(selector: string): FindResult {
     }
     // Text split over several elements, e.g. "Sign <b>in</b>".
     if (!exact.length && !partial.length) {
-      for (const element of document.querySelectorAll<HTMLElement>(
+      for (const element of root.querySelectorAll<HTMLElement>(
         "a, button, label, summary, [role], li, td, th, h1, h2, h3, h4, h5, h6, p, span, div",
       )) {
         if (normalize(element.innerText) === wanted) exact.push(element);
       }
     }
-    const clickable =
-      "a, button, input, textarea, select, label, summary, [role=button], [role=link], [role=tab], [role=menuitem], " +
-      "[role=option], [role=checkbox], [role=radio], [onclick]";
-    const pick = (list: Element[]) => {
-      for (const element of list) {
-        const candidate = element.closest(clickable) ?? element;
-        if (visible(candidate)) return candidate;
+    const candidates = [...exact, ...partial].map((element) => element.closest(clickable) ?? element);
+    return [...new Set(candidates)].filter(visible);
+  };
+
+  const [first, ...rest] = selector.split(/\s+>>\s+/);
+  let found = matchAll(first, document.body ?? document.documentElement);
+  if (typeof found === "string") return { error: found };
+  for (const part of rest) {
+    let next: Element | undefined;
+    for (const anchor of found) {
+      // A itself first, then the blocks around it.
+      for (let scope: Element | null = anchor; scope && !next; scope = scope.parentElement) {
+        const inside = matchAll(part, scope);
+        if (typeof inside === "string") return { error: inside };
+        next = inside.find((element) => !element.contains(anchor));
       }
-      return null;
-    };
-    target = pick(exact) ?? pick(partial);
-  } else {
-    let matches: NodeListOf<Element>;
-    try {
-      matches = document.querySelectorAll(selector);
-    } catch {
-      return { error: `"${selector}" is not a valid CSS selector. For text, write text=${selector}.` };
+      if (next) break;
     }
-    target = [...matches].find(visible) ?? null;
+    found = next ? [next] : [];
   }
+  const target = found[0] ?? null;
 
   if (!target) return null;
   w.__hltTarget = target;
@@ -233,6 +243,24 @@ export function findFileInputOfTarget(): boolean {
   if (!(found instanceof HTMLInputElement) || found.type !== "file") return false;
   (window as any).__hltFileInput = found;
   return true;
+}
+
+/** The address of the last found element: its link, or the text of a field or element when it is an address. */
+export function targetAddress(): string | null {
+  const element: Element | undefined = (window as any).__hltTarget;
+  if (!element) return null;
+  const link = element.closest("a[href]") ?? element.querySelector("a[href]");
+  const text =
+    link instanceof HTMLAnchorElement
+      ? link.href
+      : element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+        ? element.value
+        : (element.textContent ?? "");
+  try {
+    return new URL(text.trim(), location.href).href;
+  } catch {
+    return null;
+  }
 }
 
 export function scrollTargetIntoView() {
