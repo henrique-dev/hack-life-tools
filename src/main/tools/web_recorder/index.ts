@@ -263,9 +263,16 @@ class WebRecorderApi implements ToolApi {
     let current: Step | null = null;
     try {
       await driver.start();
-      for (const [index, step] of steps.entries()) {
+      for (let index = 0; index < steps.length; index++) {
+        const step = steps[index];
         current = step;
         this.update({ step: index, line: step.line, source: step.source });
+        if (step.command.kind === "if") {
+          const visible = await driver.isVisible(step.command.target, step.command.timeoutMs);
+          // endIndex is the first step after the block; the loop adds one.
+          if (visible === step.command.negate) index = step.command.endIndex - 1;
+          continue;
+        }
         await driver.run(step.command);
         // The video starts once the first page has loaded, not on a blank window.
         if (record && !encoder && step.command.kind === "goto") {

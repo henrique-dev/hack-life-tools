@@ -19,6 +19,7 @@ export type Command =
   | { kind: "scrollTo"; target: string }
   | { kind: "scrollEdge"; edge: "top" | "bottom" }
   | { kind: "highlight"; target: string; ms: number }
+  | { kind: "if"; target: string; negate: boolean; timeoutMs: number; endIndex: number }
   | { kind: "caption"; text: string | null }
   | { kind: "zoom"; factor: number };
 
@@ -58,6 +59,7 @@ const PAGE_COMMANDS = new Set<Command["kind"]>([
   "scrollTo",
   "scrollEdge",
   "highlight",
+  "if",
 ]);
 
 /** For the help in the UI. */
@@ -86,6 +88,16 @@ export const COMMANDS: { syntax: string; description: string }[] = [
   { syntax: "scroll top|bottom", description: "Scroll to the top or the bottom of the page." },
   { syntax: "wait <time>", description: "Pause, e.g. wait 2s or wait 500ms." },
   { syntax: "wait-for <target> [timeout]", description: "Wait until the element appears (default timeout 10s)." },
+  {
+    syntax: "if-visible <target> [timeout]",
+    description:
+      "Run the lines up to the matching end only if the element is on the page (checks now without a timeout).",
+  },
+  {
+    syntax: "if-not-visible <target> [timeout]",
+    description: "Run the lines up to the matching end only if it is not.",
+  },
+  { syntax: "end", description: "Close an if-visible or if-not-visible." },
   { syntax: "highlight <target> [time]", description: "Dim the page around the element for a moment (default 1.5s)." },
   { syntax: 'caption "text"', description: "Show a subtitle at the bottom of the video until the next caption." },
   { syntax: "caption off", description: "Hide the subtitle." },
@@ -386,6 +398,13 @@ function parseCommand(tokens: Token[]): Command | string {
       }
       return "Use scroll down, up, left or right, scroll to <target>, scroll top or scroll bottom.";
     }
+    case "if-visible":
+    case "if-not-visible": {
+      const [rest, timeoutMs] = withOptionalDuration(args);
+      const target = needTarget(rest);
+      if (!target) return `Write what to look for, e.g. ${name} text=Sign in.`;
+      return { kind: "if", target, negate: name === "if-not-visible", timeoutMs: timeoutMs ?? 0, endIndex: -1 };
+    }
     case "highlight": {
       const [rest, ms] = withOptionalDuration(args);
       const target = needTarget(rest);
@@ -413,6 +432,8 @@ function parseCommand(tokens: Token[]): Command | string {
 export function parseScript(text: string): ParsedScript {
   const steps: Step[] = [];
   const errors: ScriptError[] = [];
+  // The ifs still waiting for their end.
+  const blocks: Step[] = [];
   let opened = false;
 
   text.split(/\r?\n/).forEach((raw, index) => {
@@ -424,18 +445,29 @@ export function parseScript(text: string): ParsedScript {
       errors.push({ line, message: tokens });
       return;
     }
+    if (tokens.length === 1 && !tokens[0].quoted && tokens[0].value.toLowerCase() === "end") {
+      const block = blocks.pop();
+      if (block?.command.kind === "if") block.command.endIndex = steps.length;
+      else errors.push({ line, message: "This end has no if-visible or if-not-visible to close." });
+      return;
+    }
     const command = parseCommand(tokens);
     if (typeof command === "string") {
       errors.push({ line, message: command });
       return;
     }
-    if (command.kind === "goto") opened = true;
+    // A goto inside a block may be skipped, so it does not count as opening the page.
+    if (command.kind === "goto") opened ||= !blocks.length;
     else if (!opened && PAGE_COMMANDS.has(command.kind)) {
       errors.push({ line, message: "Open a page with goto before this line." });
       return;
     }
-    steps.push({ line, source, command });
+    const step = { line, source, command };
+    steps.push(step);
+    if (command.kind === "if") blocks.push(step);
   });
+
+  for (const block of blocks) errors.push({ line: block.line, message: "Close this block with a line saying end." });
 
   if (!errors.length && !opened) errors.push({ line: 1, message: "The script needs a goto line to open a page." });
   return { steps, errors };
