@@ -1,4 +1,6 @@
 import { app, BrowserWindow, session, type NativeImage, type Session, type WebContents } from "electron";
+import { stat } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { sleep } from "../../lib/util";
 import * as page from "./page";
 import { charKey, parseKeys, type Command, type KeyPress } from "./script";
@@ -42,6 +44,8 @@ export interface DriverOptions {
   cursor: boolean;
   /** Multiplies movement, typing and pauses (see PACE_FACTOR). */
   pace: number;
+  /** Folder of the script, for the relative paths of upload; null if it was never saved. */
+  scriptFolder: string | null;
   signal: AbortSignal;
   onFrame(image: NativeImage): void;
 }
@@ -166,8 +170,12 @@ export class PageDriver {
         if (error) throw new Error(error);
         return;
       }
+      case "drag":
+        return this.drag(command.target, command.to);
+      case "upload":
+        return this.upload(command.target, command.files);
       case "scroll":
-        return this.wheel(command.by);
+        return this.wheel(command.by, command.axis);
       case "scrollTo":
         await this.reveal(command.target);
         return;
@@ -294,8 +302,8 @@ export class PageDriver {
     }
   }
 
-  /** Glide the mouse to a point, firing real mouse moves along the way. */
-  private async moveTo(x: number, y: number) {
+  /** Glide the mouse to a point, firing real mouse moves along the way (with the left button down when held). */
+  private async moveTo(x: number, y: number, held = false) {
     const from = { ...this.mouse };
     const distance = Math.hypot(x - from.x, y - from.y);
     if (distance < 1) return;
@@ -306,7 +314,12 @@ export class PageDriver {
       const t = Math.min(1, (Date.now() - start) / duration);
       const eased = easeInOut(t);
       this.mouse = { x: from.x + (x - from.x) * eased, y: from.y + (y - from.y) * eased };
-      await this.input("Input.dispatchMouseEvent", { type: "mouseMoved", ...this.mouse, button: "none", buttons: 0 });
+      await this.input("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        ...this.mouse,
+        button: held ? "left" : "none",
+        buttons: held ? 1 : 0,
+      });
       if (t >= 1) return;
       await sleep(MOVE_FRAME_MS);
     }
@@ -321,6 +334,78 @@ export class PageDriver {
     await sleep(70);
     await this.input("Input.dispatchMouseEvent", { type: "mouseReleased", ...at, buttons: 0 });
     await this.settle();
+  }
+
+  /** Press on an element, move with the button down and release, as real mouse events. */
+  private async drag(target: string, to: string | { x: number; y: number }) {
+    const rect = await this.reveal(target);
+    const x = rect.x + rect.width / 2;
+    const y = rect.y + rect.height / 2;
+    await this.moveTo(x, y);
+    // Before pressing: scrolling with the button down would drag something else.
+    const end = typeof to === "string" ? await this.dropPoint(to) : { x: x + to.x, y: y + to.y };
+    await this.pause(120);
+    await this.input("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      ...this.mouse,
+      button: "left",
+      clickCount: 1,
+      buttons: 1,
+    });
+    await sleep(90);
+    await this.moveTo(end.x, end.y, true);
+    await this.pause(150);
+    await this.input("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      ...this.mouse,
+      button: "left",
+      clickCount: 1,
+      buttons: 0,
+    });
+    await this.settle();
+  }
+
+  private async dropPoint(target: string) {
+    const found = await this.locate(target);
+    if (!found.inView) throw new Error(`"${target}" is outside the visible part of the page: scroll to it first.`);
+    return { x: found.rect.x + found.rect.width / 2, y: found.rect.y + found.rect.height / 2 };
+  }
+
+  /** Choose files for a file field without opening the file chooser, which is not drawn offscreen. */
+  private async upload(target: string | null, files: string[]) {
+    const paths = await Promise.all(files.map((file) => this.resolveFile(file)));
+    const direct = await this.eval(page.findFileInput, target).catch(() => false);
+    if (target && !direct) {
+      const rect = await this.reveal(target);
+      const x = rect.x + rect.width / 2;
+      const y = rect.y + rect.height / 2;
+      await this.moveTo(x, y);
+      await this.eval(page.overlay, "ripple", [x, y]);
+      if (!(await this.eval(page.findFileInputOfTarget))) throw new Error(`"${target}" has no file field.`);
+    } else if (!direct) {
+      await this.waitForFileInput();
+    }
+    const { result } = await this.input("Runtime.evaluate", { expression: "window.__hltFileInput" });
+    await this.input("DOM.setFileInputFiles", { files: paths, objectId: result.objectId });
+    await this.settle();
+  }
+
+  private async waitForFileInput() {
+    const end = Date.now() + FIND_TIMEOUT;
+    while (!(await this.eval(page.findFileInput, null).catch(() => false))) {
+      if (Date.now() > end) throw new Error("There is no file field on the page.");
+      await this.wait(POLL_MS);
+    }
+  }
+
+  private async resolveFile(file: string) {
+    if (!isAbsolute(file) && !this.options.scriptFolder) {
+      throw new Error(`Save the script or use an absolute path for "${file}".`);
+    }
+    const path = resolve(this.options.scriptFolder ?? "", file);
+    const info = await stat(path).catch(() => null);
+    if (!info?.isFile()) throw new Error(`File not found: ${path}`);
+    return path;
   }
 
   private async press(key: KeyPress) {
@@ -352,7 +437,7 @@ export class PageDriver {
   }
 
   /** Scroll with the mouse wheel where the cursor is, so scrollable panels under it scroll too. */
-  private async wheel(by: number) {
+  private async wheel(by: number, axis: "x" | "y") {
     const duration = Math.min(2000, Math.max(400, Math.abs(by) * 1.2)) * this.options.pace;
     const start = Date.now();
     let done = 0;
@@ -361,7 +446,12 @@ export class PageDriver {
       const t = Math.min(1, (Date.now() - start) / duration);
       const delta = Math.round(by * easeInOut(t) - done);
       if (delta) {
-        await this.input("Input.dispatchMouseEvent", { type: "mouseWheel", ...this.mouse, deltaX: 0, deltaY: delta });
+        await this.input("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          ...this.mouse,
+          deltaX: axis === "x" ? delta : 0,
+          deltaY: axis === "y" ? delta : 0,
+        });
         done += delta;
       }
       if (t >= 1) break;

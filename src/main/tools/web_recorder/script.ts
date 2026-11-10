@@ -13,7 +13,9 @@ export type Command =
   | { kind: "type"; target: string | null; text: string }
   | { kind: "press"; keys: string }
   | { kind: "select"; target: string; option: string }
-  | { kind: "scroll"; by: number }
+  | { kind: "drag"; target: string; to: string | { x: number; y: number } }
+  | { kind: "upload"; target: string | null; files: string[] }
+  | { kind: "scroll"; by: number; axis: "x" | "y" }
   | { kind: "scrollTo"; target: string }
   | { kind: "scrollEdge"; edge: "top" | "bottom" }
   | { kind: "highlight"; target: string; ms: number }
@@ -50,6 +52,8 @@ const PAGE_COMMANDS = new Set<Command["kind"]>([
   "type",
   "press",
   "select",
+  "drag",
+  "upload",
   "scroll",
   "scrollTo",
   "scrollEdge",
@@ -68,8 +72,14 @@ export const COMMANDS: { syntax: string; description: string }[] = [
     description: "Enter, Tab, Escape, Backspace, ArrowDown, ..., or combinations like Control+A.",
   },
   { syntax: 'select <target> "option"', description: "Choose an option of a dropdown list, by its text." },
+  { syntax: "drag <target> to <target>", description: "Press on an element, drag it over another one and release." },
+  { syntax: "drag <target> by <x> <y>", description: "Press on an element, move by these pixels and release." },
   {
-    syntax: "scroll down|up [pixels]",
+    syntax: 'upload [target] "file"',
+    description: "Choose files for a file field. Paths are absolute or relative to the script's folder.",
+  },
+  {
+    syntax: "scroll down|up|left|right [pixels]",
     description: `Scroll with the mouse wheel where the cursor is (default ${DEFAULT_SCROLL}).`,
   },
   { syntax: "scroll to <target>", description: "Scroll until the element is in the middle of the page." },
@@ -334,19 +344,47 @@ function parseCommand(tokens: Token[]): Command | string {
       if (!option?.quoted || !target) return 'Write the list and the option in quotes, e.g. select #country "Brazil".';
       return { kind: "select", target, option: option.value };
     }
+    case "drag": {
+      // The last bare "to" or "by", so a target can contain those words.
+      const index = args.map((token) => !token.quoted && /^(to|by)$/i.test(token.value)).lastIndexOf(true);
+      const target = index > 0 ? joined(args.slice(0, index)) : null;
+      const rest = args.slice(index + 1);
+      const usage = "Write what to drag and where, e.g. drag .card to #done or drag .card by 200 0.";
+      if (!target || !rest.length) return usage;
+      if (args[index].value.toLowerCase() === "to") return { kind: "drag", target, to: joined(rest) };
+      const [x, y] = rest.map((token) => Number(token.value.replace(/px$/i, "")));
+      return rest.length === 2 && Number.isFinite(x) && Number.isFinite(y)
+        ? { kind: "drag", target, to: { x, y } }
+        : usage;
+    }
+    case "upload": {
+      const usage = 'Write the file in quotes, e.g. upload "photo.jpg" or upload #photo "photo.jpg".';
+      // A quoted first argument is the target only when files come after it.
+      const firstFile = args[0]?.quoted ? (args.length > 1 ? 1 : 0) : args.findIndex((token) => token.quoted);
+      if (firstFile < 0 || !args.length || !args.slice(firstFile).every((token) => token.quoted)) return usage;
+      return {
+        kind: "upload",
+        target: needTarget(args.slice(0, firstFile)),
+        files: args.slice(firstFile).map((t) => t.value),
+      };
+    }
     case "scroll": {
       const how = args[0]?.value.toLowerCase();
-      if (how === "down" || how === "up") {
+      if (how === "down" || how === "up" || how === "left" || how === "right") {
         const amount = args[1] ? Number(args[1].value.replace(/px$/i, "")) : DEFAULT_SCROLL;
         if (!(amount > 0) || args.length > 2) return "Write how many pixels to scroll, e.g. scroll down 600.";
-        return { kind: "scroll", by: how === "down" ? amount : -amount };
+        return {
+          kind: "scroll",
+          by: how === "down" || how === "right" ? amount : -amount,
+          axis: how === "left" || how === "right" ? "x" : "y",
+        };
       }
       if ((how === "top" || how === "bottom") && args.length === 1) return { kind: "scrollEdge", edge: how };
       if (how === "to") {
         const target = needTarget(args.slice(1));
         return target ? { kind: "scrollTo", target } : "Write where to scroll to, e.g. scroll to #pricing.";
       }
-      return "Use scroll down, scroll up, scroll to <target>, scroll top or scroll bottom.";
+      return "Use scroll down, up, left or right, scroll to <target>, scroll top or scroll bottom.";
     }
     case "highlight": {
       const [rest, ms] = withOptionalDuration(args);

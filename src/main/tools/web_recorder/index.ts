@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import { readFileSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Host } from "../../host";
 import { requireFfmpeg, uniquePath } from "../../lib/ffmpeg";
 import { errorMessage, timestamp } from "../../lib/util";
@@ -247,6 +247,7 @@ class WebRecorderApi implements ToolApi {
       fps: settings.fps,
       cursor: settings.cursor,
       pace: PACE_FACTOR[settings.pace],
+      scriptFolder: this.saved.scriptPath && dirname(this.saved.scriptPath),
       signal,
       onFrame: (image) => {
         encoder?.frame(image);

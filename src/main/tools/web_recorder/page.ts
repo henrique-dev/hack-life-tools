@@ -205,6 +205,36 @@ export function findTarget(selector: string): FindResult {
   };
 }
 
+/**
+ * Find a file field, visible or not (they are usually hidden behind a button or a label), and remember it. Without a
+ * selector it is the first one of the page; a selector that is not a file field returns null.
+ */
+export function findFileInput(selector: string | null): boolean {
+  const isFile = (element: Element) => element instanceof HTMLInputElement && element.type === "file";
+  let match: Element | undefined;
+  try {
+    match = [...document.querySelectorAll(selector ?? "input[type=file]")].find(isFile);
+  } catch {
+    // text=... or anything else that is not a CSS selector.
+  }
+  if (match) (window as any).__hltFileInput = match;
+  return !!match;
+}
+
+/** The file field that belongs to the last found element: its own, inside it, or the nearest one around it. */
+export function findFileInputOfTarget(): boolean {
+  const target: Element | undefined = (window as any).__hltTarget;
+  if (!target) return false;
+  const label = target.closest("label");
+  let found: Element | null | undefined = label?.control ?? target.querySelector("input[type=file]");
+  for (let parent = target.parentElement; !found && parent; parent = parent.parentElement) {
+    found = parent.querySelector("input[type=file]");
+  }
+  if (!(found instanceof HTMLInputElement) || found.type !== "file") return false;
+  (window as any).__hltFileInput = found;
+  return true;
+}
+
 export function scrollTargetIntoView() {
   (window as any).__hltTarget?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
 }

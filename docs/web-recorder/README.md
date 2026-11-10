@@ -208,18 +208,54 @@ The cursor moves to the list and shows a click, but the list does not open in th
 those popups outside the page. Custom dropdowns built from regular elements (most UI libraries) are not `<select>`
 lists: open them with `click` and choose with `click text=...`.
 
+### `drag <target> to <target>` / `drag <target> by <x> <y>`
+
+Presses the left button on the middle of an element, moves with the button down and releases, as real mouse events.
+For bars of a chart, kanban cards, sliders and panning a canvas.
+
+```
+drag .card to #done
+drag "[data-bar='1.2']" by 200 0
+drag [data-resize] by -40 0
+```
+
+- `to` drops on the middle of another element, which must already be visible: use `scroll` first if it is not.
+- `by` moves by that many pixels, right and down when positive.
+- Elements that only appear on hover (like a resize handle) need a `hover` on their parent first.
+- Quotes are optional, as in `click`. If the target itself contains the word `to` or `by`, it still works: the last
+  one on the line is the separator.
+
+### `upload [target] "file"`
+
+Chooses files for a file field, without opening the file chooser (it would not appear in the video).
+
+```
+upload "photos/front.jpg"
+upload input[name=avatar] "/home/me/avatar.png"
+upload text=Choose photos "photos/a.jpg" "photos/b.jpg"
+```
+
+- Relative paths start from the folder of the saved script, so a script and its files can live together.
+- The target is the file field, hidden or not, or a visible element next to it, such as its button or label. Then the
+  cursor moves to it and shows a click.
+- Without a target, the first file field of the page is used. With several files, write the target too, or the first
+  quoted file would be read as the target.
+- The field receives the change event, so the page reacts as if the files had been chosen by hand.
+
 ### `scroll`
 
 ```
 scroll down
 scroll down 800
 scroll up 300
+scroll right 400
+scroll left 400
 scroll to #pricing
 scroll top
 scroll bottom
 ```
 
-`scroll down` and `scroll up` scroll by the given number of pixels (500 without one), turning the mouse wheel where the cursor is, so a scrollable panel under the cursor
+`scroll down`, `up`, `left` and `right` scroll by the given number of pixels (500 without one), turning the mouse wheel where the cursor is, so a scrollable panel under the cursor
 scrolls instead of the page. Move the cursor first (`hover`) to scroll a specific panel, such as a sidebar or a
 table. `scroll to` scrolls the page
 smoothly until the element is in the middle of the screen, and `scroll top` and `scroll bottom` to the start or
@@ -289,8 +325,8 @@ A plain number is a factor: `zoom 1.5` is the same as `zoom 150%`.
 
 You do not need to add pauses between every step:
 
-- **After each visible step** (`goto`, `click`, `hover`, `type`, `press`, `select`, `scroll`, `highlight`) the
-  recorder pauses for 0.7 seconds, so viewers can follow. There is no pause after `wait`, `wait-for`, `caption`
+- **After each visible step** (`goto`, `click`, `hover`, `type`, `press`, `select`, `drag`, `upload`, `scroll`,
+  `highlight`) the recorder pauses for 0.7 seconds, so viewers can follow. There is no pause after `wait`, `wait-for`, `caption`
   and `zoom`.
 - **The cursor** glides to each element, faster for short distances (from about 0.25 s to 1.1 s).
 - **Typing** takes about 75 ms per character, with a slightly irregular rhythm.
@@ -445,7 +481,9 @@ spaces: `Control+Shift+P`.
 - **No sound.** The page's audio is not recorded.
 - **Iframes:** elements inside iframes (embedded videos, some payment forms and editors) cannot be targeted.
 - **Native popups:** the open list of a `<select>`, date pickers drawn by the browser, and file choosers do not
-  appear. `select` chooses an option without opening the list; file uploads cannot be scripted.
+  appear. `select` chooses an option without opening the list; `upload` sets the files without showing the chooser.
+- **HTML5 drag and drop:** `drag` sends mouse events. Pages that drag with the native `draggable` attribute may not
+  react to it; those built on mouse or pointer events do.
 - **Dialogs:** `alert()`, `confirm()` and `prompt()` are accepted automatically and do not appear. "Leave this
   page?" prompts are skipped.
 - **New tabs** open in the same page.
