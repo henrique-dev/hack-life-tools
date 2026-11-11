@@ -60,7 +60,9 @@ An Electron + React + Tailwind v4 app made of independent "tools", built with el
   `page.ts` are sent to the page as source text (`fn.toString()`), so they must be self-contained, and they avoid
   `innerHTML`/`<style>` to work under strict CSP and Trusted Types. Frames from the `paint` event go to ffmpeg as
   raw BGRA at a constant frame rate (`encoder.ts`). Its browser session is the persistent partition
-  `persist:web_recorder`, shared with the login window. The script language is documented for users in
+  `persist:web_recorder`, shared with the login window (`browser.ts`): a window from `host.openWindow()` whose own
+  page is the navigation bar (`windows/browser.tsx`), with the site in a `WebContentsView` below it, so sites
+  never get the app's preload. The script language is documented for users in
   `docs/web-recorder/README.md`: update it (and `COMMANDS` in `script.ts`) when commands or their rules change.
 - `host.emit()` only reaches the app's own windows (the main window and those from `host.openWindow()`), not windows
   showing external sites.

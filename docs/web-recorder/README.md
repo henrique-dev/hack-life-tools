@@ -171,6 +171,21 @@ follow input[readonly]
 follow text=Public page
 ```
 
+### `reload` / `reload hard`
+
+Reloads the page, like pressing F5, and waits for it to load again. Use it when the app does not show new data by
+itself, e.g. after something changed in another system or another tab, until the page is refreshed.
+
+```
+click text=Approve
+goto localhost:3001/requests
+reload
+wait-for text=Approved
+```
+
+`reload hard` also skips the browser's cache, like Control+Shift+R: use it when a plain `reload` still shows old
+data. The cursor, the caption and the zoom stay as they were. `refresh` is the same command.
+
 ### `click <target>`
 
 Moves the cursor to the middle of the element and clicks it, with a click effect in the video. If the click opens
@@ -385,8 +400,8 @@ A plain number is a factor: `zoom 1.5` is the same as `zoom 150%`.
 
 You do not need to add pauses between every step:
 
-- **After each visible step** (`goto`, `click`, `hover`, `type`, `press`, `select`, `drag`, `upload`, `scroll`,
-  `highlight`) the recorder pauses for 0.7 seconds, so viewers can follow. There is no pause after `wait`, `wait-for`, `caption`
+- **After each visible step** (`goto`, `reload`, `click`, `hover`, `type`, `press`, `select`, `drag`, `upload`,
+  `scroll`, `highlight`) the recorder pauses for 0.7 seconds, so viewers can follow. There is no pause after `wait`, `wait-for`, `caption`
   and `zoom`.
 - **The cursor** glides to each element, faster for short distances (from about 0.25 s to 1.1 s).
 - **Typing** takes about 75 ms per character, with a slightly irregular rhythm.
@@ -403,10 +418,23 @@ logging in:
 
 1. Make sure the script's first `goto` is the app's address.
 2. Click **Log in...**. A window opens with that page, in the recorder's browser.
-3. Log in as usual (passwords, two-factor codes, "remember me"), then close the window.
+3. Log in as usual (passwords, two-factor codes, "remember me"), then click **Done** or close the window.
 4. Record. The script starts already logged in, so it does not need login steps or your password.
 
 The login lasts as long as the site keeps you logged in. **Clear saved logins** logs out of every site.
+
+The window has a navigation bar like a browser: back, forward, **reload** and an address bar, to go to other
+systems (e.g. after a single sign-on) or check that a page shows what you expect before recording. The usual
+shortcuts work:
+
+| Shortcut | Action |
+| --- | --- |
+| F5 or Control+R | reload |
+| Control+Shift+R, Control+F5 or Shift+click on reload | reload without the cache |
+| Alt+Left / Alt+Right | back / forward |
+| F12 or Control+Shift+I | developer tools of the page (to inspect elements and find selectors) |
+
+On macOS, use Command instead of Control.
 
 You can also script the login, e.g. for a demo account. The password is then visible in the script and typed on
 screen; with `type`, a password field shows dots in the video.
@@ -532,6 +560,10 @@ explicitly: `type #email "..."`.
 
 **Something happens too early.** After clicks that start an animation or a transition, add `wait 1s`, or
 `wait-for` the element that appears at the end of it.
+
+**The page shows old data until it is refreshed.** Some apps only load data when the page opens. Add `reload`
+before the step that needs the new data, followed by `wait-for` the element that shows it. If it is still old,
+use `reload hard`.
 
 **"Unknown key ..."** Check the key names in [`press`](#press-key). Combinations are joined with `+` and no
 spaces: `Control+Shift+P`.

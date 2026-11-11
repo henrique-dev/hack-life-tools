@@ -221,9 +221,9 @@ wait 2s
   nothing else on the screen appears in the video and the computer can be used meanwhile. The video starts once
   the first page has loaded. **Test run** plays the script without saving, with a live preview.
 - Scripts can be saved as `.txt` files; the one being edited is also kept between sessions.
-- **Logins:** **Log in...** opens the script's first page in a normal window using the recorder's browser.
-  Log in there and close it: recordings reuse its cookies, so they start logged in. **Clear saved logins**
-  forgets them.
+- **Logins:** **Log in...** opens the script's first page in a browser window using the recorder's browser,
+  with back, forward, reload (F5) and an address bar, and developer tools on F12. Log in there and close it:
+  recordings reuse its cookies, so they start logged in. **Clear saved logins** forgets them.
 - Not recorded: the page's sound, and native dropdown popups (`select` picks the option without opening the
   list). `alert()` and similar dialogs are accepted automatically, and links that open a new tab open in the same
   page. Elements inside iframes cannot be targeted. Some sites block automated or embedded browsers (e.g. Google

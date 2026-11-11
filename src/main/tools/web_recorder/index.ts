@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, type NativeImage } from "electron";
 import { readFileSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -6,6 +6,7 @@ import type { Host } from "../../host";
 import { requireFfmpeg, uniquePath } from "../../lib/ffmpeg";
 import { errorMessage, timestamp } from "../../lib/util";
 import type { Tool, ToolApi } from "../types";
+import { LoginBrowser } from "./browser";
 import { CanceledError, PageDriver, recorderSession } from "./driver";
 import { FrameEncoder } from "./encoder";
 import {
@@ -14,6 +15,7 @@ import {
   PACE_FACTOR,
   parseScript,
   RESOLUTIONS,
+  type BrowserState,
   type Command,
   type RecorderSettings,
   type Step,
@@ -28,8 +30,10 @@ const STEP_PAUSE_MS = 700;
 const NO_PAUSE = new Set<Command["kind"]>(["wait", "waitFor", "caption", "zoom"]);
 // Still frames at the end, so the video does not stop on the last action.
 const END_HOLD_MS = 1000;
-const PREVIEW_INTERVAL_MS = 400;
-const PREVIEW_WIDTH = 640;
+// Live preview in the UI: up to 10 frames per second, sharp enough for a full-width view.
+const PREVIEW_INTERVAL_MS = 100;
+const PREVIEW_MAX_WIDTH = 1600;
+const PREVIEW_QUALITY = 85;
 const SAVE_DELAY_MS = 500;
 
 export interface RunJob {
@@ -93,7 +97,7 @@ class WebRecorderApi implements ToolApi {
   private job: RunJob = idleJob();
   private abort: AbortController | null = null;
   private running: Promise<void> | null = null;
-  private loginWindow: BrowserWindow | null = null;
+  private browser: LoginBrowser | null = null;
 
   constructor(private readonly host: Host) {
     const defaults: Saved = {
@@ -169,24 +173,46 @@ class WebRecorderApi implements ToolApi {
    * by hand. The recordings then use the same cookies, so they start logged in.
    */
   openLogin(url: string) {
-    if (this.loginWindow && !this.loginWindow.isDestroyed()) {
-      this.loginWindow.loadURL(url).catch(() => {});
-      this.loginWindow.focus();
+    if (this.browser) {
+      this.browser.open(url);
+      this.browser.focus();
       return;
     }
-    const window = new BrowserWindow({
-      title: "Log in - Web Recorder",
-      width: 1280,
-      height: 860,
-      autoHideMenuBar: true,
-      webPreferences: { session: recorderSession() },
-    });
-    this.loginWindow = window;
-    window.on("closed", () => {
-      this.loginWindow = null;
+    this.browser = new LoginBrowser(this.host, url, () => {
+      this.browser = null;
       this.host.emit(TOOL_ID, "loginClosed");
     });
-    window.loadURL(url).catch(() => {});
+  }
+
+  // The login window's navigation bar (windows/browser.tsx).
+
+  browserState(): BrowserState | null {
+    return this.browser?.state() ?? null;
+  }
+
+  browserNavigate(address: string) {
+    this.requireBrowser().navigate(address);
+  }
+
+  browserBack() {
+    this.requireBrowser().back();
+  }
+
+  browserForward() {
+    this.requireBrowser().forward();
+  }
+
+  browserReload(hard: boolean) {
+    this.requireBrowser().reload(hard);
+  }
+
+  browserStop() {
+    this.requireBrowser().stop();
+  }
+
+  private requireBrowser() {
+    if (!this.browser) throw new Error("The login window is closed.");
+    return this.browser;
   }
 
   /** Forget all logins, cookies and site data of the recorder's browser. */
@@ -240,7 +266,23 @@ class WebRecorderApi implements ToolApi {
   private async execute(steps: Step[], settings: RecorderSettings, record: boolean, signal: AbortSignal) {
     const [width, height] = RESOLUTIONS[settings.resolution];
     let encoder: FrameEncoder | null = null;
+
+    // The preview shows the latest frame at most every PREVIEW_INTERVAL_MS. A frame
+    // painted meanwhile is sent when the interval ends, so the preview never stays
+    // on an old frame after the page stops changing.
+    const previewWidth = Math.min(width, PREVIEW_MAX_WIDTH);
     let lastPreview = 0;
+    let pendingPreview: NativeImage | null = null;
+    let previewTimer: NodeJS.Timeout | null = null;
+    const sendPreview = () => {
+      previewTimer = null;
+      if (!pendingPreview) return;
+      lastPreview = Date.now();
+      const jpeg = pendingPreview.resize({ width: previewWidth, quality: "better" }).toJPEG(PREVIEW_QUALITY);
+      pendingPreview = null;
+      this.host.emit(TOOL_ID, "preview", `data:image/jpeg;base64,${jpeg.toString("base64")}`);
+    };
+
     const driver = new PageDriver({
       width,
       height,
@@ -251,12 +293,9 @@ class WebRecorderApi implements ToolApi {
       signal,
       onFrame: (image) => {
         encoder?.frame(image);
-        const now = Date.now();
-        if (now - lastPreview >= PREVIEW_INTERVAL_MS) {
-          lastPreview = now;
-          const jpeg = image.resize({ width: PREVIEW_WIDTH }).toJPEG(70);
-          this.host.emit(TOOL_ID, "preview", `data:image/jpeg;base64,${jpeg.toString("base64")}`);
-        }
+        if (image.isEmpty()) return;
+        pendingPreview = image;
+        previewTimer ??= setTimeout(sendPreview, Math.max(0, lastPreview + PREVIEW_INTERVAL_MS - Date.now()));
       },
     });
 
@@ -302,6 +341,7 @@ class WebRecorderApi implements ToolApi {
           error: current ? `Line ${current.line}: ${errorMessage(err)}` : errorMessage(err),
         });
     } finally {
+      if (previewTimer) clearTimeout(previewTimer);
       driver.close();
     }
   }

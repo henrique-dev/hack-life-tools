@@ -141,6 +141,8 @@ export class PageDriver {
     switch (command.kind) {
       case "goto":
         return this.goto(command.url);
+      case "reload":
+        return this.reload(command.hard);
       case "follow": {
         await this.pointAt(command.target);
         const url = await this.eval(page.targetAddress);
@@ -260,6 +262,18 @@ export class PageDriver {
   }
 
   /** Wait for a navigation that the last action may have started. */
+  /** Reload like F5 (or Control+Shift+R with hard) and wait until the page has loaded again. */
+  private async reload(hard: boolean) {
+    const contents = this.contents;
+    let stopped = false;
+    contents.once("did-stop-loading", () => (stopped = true));
+    if (hard) contents.reloadIgnoringCache();
+    else contents.reload();
+    const end = Date.now() + LOAD_TIMEOUT;
+    while (!stopped && Date.now() < end) await this.wait(POLL_MS);
+    await this.settle();
+  }
+
   private async settle() {
     await this.wait(200);
     const end = Date.now() + LOAD_TIMEOUT;

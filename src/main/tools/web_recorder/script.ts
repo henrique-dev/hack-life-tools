@@ -7,6 +7,7 @@
 export type Command =
   | { kind: "goto"; url: string }
   | { kind: "follow"; target: string }
+  | { kind: "reload"; hard: boolean }
   | { kind: "wait"; ms: number }
   | { kind: "waitFor"; target: string; timeoutMs: number | null }
   | { kind: "click"; target: string }
@@ -49,6 +50,7 @@ const MAX_ZOOM = 5;
 /** Commands that need a page, so they must come after the first goto. */
 const PAGE_COMMANDS = new Set<Command["kind"]>([
   "follow",
+  "reload",
   "waitFor",
   "click",
   "hover",
@@ -70,6 +72,10 @@ export const COMMANDS: { syntax: string; description: string }[] = [
   {
     syntax: "follow <target>",
     description: "Open the address of a link, or the one written in a field (e.g. a share link).",
+  },
+  {
+    syntax: "reload [hard]",
+    description: "Reload the page, like F5, e.g. to show data that changed. With hard, also skip the cache.",
   },
   { syntax: "click <target>", description: "Move the cursor to the element and click it." },
   { syntax: "hover <target>", description: "Move the cursor over the element (shows menus and tooltips)." },
@@ -148,6 +154,18 @@ export interface RecorderSettings {
   pace: Pace;
   /** Draw a mouse cursor and click effects in the video. */
   cursor: boolean;
+}
+
+/** Height in CSS pixels of the navigation bar of the login window (windows/browser.tsx draws it). */
+export const BROWSER_TOOLBAR_HEIGHT = 44;
+
+/** What the login window's navigation bar shows. */
+export interface BrowserState {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
 }
 
 export const DEFAULT_SETTINGS: RecorderSettings = { resolution: "1920x1080", fps: 30, pace: "normal", cursor: true };
@@ -313,7 +331,7 @@ function parseDuration(token: Token | undefined): number | null {
 }
 
 /** Adds http:// for local addresses and https:// for others when the scheme is missing. */
-function normalizeUrl(value: string): string | null {
+export function normalizeUrl(value: string): string | null {
   const local = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(value);
   const withScheme =
     /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^(about|data|file):/i.test(value)
@@ -352,6 +370,12 @@ function parseCommand(tokens: Token[]): Command | string {
     case "follow": {
       const target = needTarget(args);
       return target ? { kind: "follow", target } : "Write which link to open, e.g. follow #share-link.";
+    }
+    case "reload":
+    case "refresh": {
+      const hard = args.length === 1 && !args[0].quoted && args[0].value.toLowerCase() === "hard";
+      if (args.length && !hard) return `Write reload, or reload hard to also skip the cache.`;
+      return { kind: "reload", hard };
     }
     case "wait":
     case "pause": {
