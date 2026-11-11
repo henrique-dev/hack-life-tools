@@ -27,7 +27,7 @@ const TOOL_ID = "web_recorder";
 // Pause after each step, so viewers can follow (times the pace).
 const STEP_PAUSE_MS = 700;
 // Commands that are not visible actions get no pause after them.
-const NO_PAUSE = new Set<Command["kind"]>(["wait", "waitFor", "caption", "zoom"]);
+const NO_PAUSE = new Set<Command["kind"]>(["wait", "waitFor", "waitGone", "caption", "zoom"]);
 // Still frames at the end, so the video does not stop on the last action.
 const END_HOLD_MS = 1000;
 // Live preview in the UI: up to 10 frames per second, sharp enough for a full-width view.

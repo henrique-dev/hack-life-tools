@@ -154,6 +154,8 @@ export class PageDriver {
       case "waitFor":
         await this.locate(command.target, command.timeoutMs ?? FIND_TIMEOUT);
         return;
+      case "waitGone":
+        return this.waitGone(command.target, command.timeoutMs ?? FIND_TIMEOUT);
       case "click":
         return this.click(command.target);
       case "hover":
@@ -161,6 +163,14 @@ export class PageDriver {
         return;
       case "type":
         if (command.target) {
+          const { x, y } = await this.pointAt(command.target);
+          // A date or time field takes the value at once: typing into it depends on the browser's language.
+          const dateError = await this.eval(page.fillDateInput, command.text);
+          if (dateError !== null) {
+            if (dateError) throw new Error(dateError);
+            await this.eval(page.overlay, "ripple", [x, y]);
+            return this.settle();
+          }
           await this.click(command.target);
           await this.pause(150);
         }
@@ -218,6 +228,16 @@ export class PageDriver {
       if (found && "error" in found) throw new Error(found.error);
       if (found) return true;
       if (Date.now() >= end) return false;
+      await this.wait(POLL_MS);
+    }
+  }
+
+  /** Waits until nothing on the page matches the target, e.g. a loading overlay. */
+  private async waitGone(target: string, timeoutMs: number) {
+    const end = Date.now() + timeoutMs;
+    while (await this.isVisible(target, 0)) {
+      if (Date.now() >= end)
+        throw new Error(`"${target}" is still on the page (waited ${Math.round(timeoutMs / 1000)} s).`);
       await this.wait(POLL_MS);
     }
   }

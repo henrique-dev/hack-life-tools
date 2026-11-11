@@ -10,6 +10,7 @@ export type Command =
   | { kind: "reload"; hard: boolean }
   | { kind: "wait"; ms: number }
   | { kind: "waitFor"; target: string; timeoutMs: number | null }
+  | { kind: "waitGone"; target: string; timeoutMs: number | null }
   | { kind: "click"; target: string }
   | { kind: "hover"; target: string }
   | { kind: "type"; target: string | null; text: string }
@@ -52,6 +53,7 @@ const PAGE_COMMANDS = new Set<Command["kind"]>([
   "follow",
   "reload",
   "waitFor",
+  "waitGone",
   "click",
   "hover",
   "type",
@@ -100,6 +102,10 @@ export const COMMANDS: { syntax: string; description: string }[] = [
   { syntax: "scroll top|bottom", description: "Scroll to the top or the bottom of the page." },
   { syntax: "wait <time>", description: "Pause, e.g. wait 2s or wait 500ms." },
   { syntax: "wait-for <target> [timeout]", description: "Wait until the element appears (default timeout 10s)." },
+  {
+    syntax: "wait-until-gone <target> [timeout]",
+    description: "Wait until the element is no longer on the page (default timeout 10s).",
+  },
   {
     syntax: "if-visible <target> [timeout]",
     description:
@@ -391,6 +397,14 @@ function parseCommand(tokens: Token[]): Command | string {
       const [rest, timeoutMs] = withOptionalDuration(args);
       const target = needTarget(rest);
       return target ? { kind: "waitFor", target, timeoutMs } : "Write what to wait for, e.g. wait-for .results.";
+    }
+    case "wait-until-gone":
+    case "wait-gone": {
+      const [rest, timeoutMs] = withOptionalDuration(args);
+      const target = needTarget(rest);
+      return target
+        ? { kind: "waitGone", target, timeoutMs }
+        : "Write what should go away, e.g. wait-until-gone text=Loading.";
     }
     case "click":
     case "hover": {

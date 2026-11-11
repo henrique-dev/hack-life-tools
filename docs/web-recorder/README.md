@@ -224,6 +224,10 @@ type "second field, focused by Tab"
   `click #name`, `press Control+A` (`Meta+A` on macOS), then `type "new text"`.
 - Any character can be typed, including accents and emoji.
 - To press Enter, use `press Enter` on its own line. `\n` inside the quotes types the letter `n`.
+- **Date and time fields** (`<input type="date">`, `time`, `datetime-local`, `month`, `week`) are filled at once with
+  the value in the field's own format, instead of typed key by key (typing into them depends on the order of day and
+  month of the browser's language): `type #due "{today+7}"` or `type #due "2026-11-30"` for a date, `"14:30"` for a
+  time, `"2026-11-30T14:30"` for a date and time. The value replaces what the field had.
 
 ### `press <key>`
 
@@ -334,6 +338,19 @@ wait-for .report-ready 60s
 ```
 
 `wait for` (two words) also works.
+
+### `wait-until-gone <target> [timeout]`
+
+Waits until nothing on the page matches the target, e.g. a loading overlay or a "Saving..." message that stays for a
+variable time. The default timeout is 10 seconds; the script fails if the element is still there after it.
+
+```
+click text=Recalculate
+wait-for text=Recalculating 10s
+wait-until-gone text=Recalculating 120s
+```
+
+`wait-gone` also works.
 
 ### `highlight <target> [time]`
 

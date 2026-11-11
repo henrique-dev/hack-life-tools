@@ -293,6 +293,23 @@ export function selectOption(option: string): string | null {
   return null;
 }
 
+/**
+ * Fill the last found date or time field (<input type=date|time|datetime-local|month|week>) with a value in its own
+ * format (e.g. 2026-11-09 for a date), as typing into it depends on the order of day and month of the browser's
+ * language. Returns null when the target is not such a field, an error message when the value does not fit, or "".
+ */
+export function fillDateInput(value: string): string | null {
+  const element = (window as any).__hltTarget;
+  const kinds = ["date", "time", "datetime-local", "month", "week"];
+  if (!(element instanceof HTMLInputElement) || !kinds.includes(element.type)) return null;
+  // The prototype's setter, so frameworks like React notice the change.
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value);
+  if (element.value !== value) return `"${value}" is not a valid value for this ${element.type} field.`;
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+  return "";
+}
+
 export function scrollToEdge(edge: "top" | "bottom") {
   const element = document.scrollingElement ?? document.documentElement;
   window.scrollTo({ top: edge === "top" ? 0 : element.scrollHeight, behavior: "smooth" });
