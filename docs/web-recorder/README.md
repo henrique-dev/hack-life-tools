@@ -64,7 +64,12 @@ type #due "{today+7:dd/MM/yyyy}"
 ```
 
 The default format is `2026-11-09` (`yyyy-MM-dd`). Another one goes after a colon, with `yyyy`, `MM`, `dd` (with a
-leading zero), `M` and `d` (without).
+leading zero), `M` and `d` (without). `HH` and `mm` are the hour and minute the script runs, for a value that must be
+new on every run, such as the e-mail of a user the script creates:
+
+```
+type #email "user.{today:ddMMyyyyHHmm}@example.com"
+```
 
 ## Targets: pointing at elements
 
@@ -198,6 +203,10 @@ click "nav a[href='/reports']"
 ```
 
 Links that would open a new tab open in the same page instead, so the video follows them.
+
+An SVG line (a `path`, `line` or `polyline`, e.g. an arrow between two bars of a chart) is clicked on the line itself:
+the middle of its box may be off a bent line or under something drawn over it, so the cursor goes to the first point
+from the middle of the line out that is not covered.
 
 ### `hover <target>`
 

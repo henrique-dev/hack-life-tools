@@ -280,7 +280,8 @@ interface Token {
 
 /**
  * Dates relative to the day the script runs: {today}, {today-1}, {today+7}, as 2026-11-09, or with a format of yyyy,
- * MM, dd, M and d, e.g. {today-1:dd/MM/yyyy}. So scripts that pick a day keep working on other days.
+ * MM, dd, M and d, e.g. {today-1:dd/MM/yyyy}. So scripts that pick a day keep working on other days. HH and mm are
+ * the hour and minute the script runs, e.g. {today:ddMMyyyyHHmm} for a value that is new on every run.
  */
 export function expandDates(value: string, now = new Date()): string {
   return value.replace(/\{today(?:([+-])(\d+))?(?::([^}]+))?\}/g, (_match, sign, days, pattern) => {
@@ -295,8 +296,10 @@ export function expandDates(value: string, now = new Date()): string {
       dd: String(date.getDate()).padStart(2, "0"),
       M: String(date.getMonth() + 1),
       d: String(date.getDate()),
+      HH: String(now.getHours()).padStart(2, "0"),
+      mm: String(now.getMinutes()).padStart(2, "0"),
     };
-    return (pattern ?? "yyyy-MM-dd").replace(/yyyy|MM|dd|M|d/g, (token: string) => parts[token]);
+    return (pattern ?? "yyyy-MM-dd").replace(/yyyy|MM|dd|HH|mm|M|d/g, (token: string) => parts[token]);
   });
 }
 

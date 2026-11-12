@@ -204,13 +204,43 @@ export function findTarget(selector: string): FindResult {
   }
   const target = found[0] ?? null;
 
+  /*
+   * Where to point at an element: its box, or for an SVG line (a path, line or polyline) a small box around a point of
+   * the line itself. The middle of the box of a bent line may be off the line, or under something drawn over it, so the
+   * point is the first one from the middle of the line out where the line is what the page finds at that point.
+   * Kept on window for targetRect: each of these functions runs in the page on its own.
+   */
+  const hitRect = (element: Element): CssRect => {
+    const rect = element.getBoundingClientRect();
+    const box = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    if (
+      !(element instanceof SVGGeometryElement) ||
+      element instanceof SVGRectElement ||
+      element instanceof SVGCircleElement
+    )
+      return box;
+    const matrix = element.getScreenCTM();
+    const length = element.getTotalLength();
+    if (!matrix || !length) return box;
+    for (const fraction of [
+      0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65, 0.3, 0.7, 0.25, 0.75, 0.2, 0.8, 0.15, 0.85, 0.1, 0.9,
+    ]) {
+      const local = element.getPointAtLength(length * fraction);
+      const at = new DOMPoint(local.x, local.y).matrixTransform(matrix);
+      const hit = document.elementFromPoint(at.x, at.y);
+      if (hit && (hit === element || element.contains(hit))) return { x: at.x - 2, y: at.y - 2, width: 4, height: 4 };
+    }
+    return box;
+  };
+  w.__hltHitRect = hitRect;
+
   if (!target) return null;
   w.__hltTarget = target;
-  const rect = target.getBoundingClientRect();
+  const rect = hitRect(target);
   const x = rect.x + rect.width / 2;
   const y = rect.y + rect.height / 2;
   return {
-    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    rect,
     inView: x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight,
   };
 }
@@ -271,6 +301,8 @@ export function scrollTargetIntoView() {
 export function targetRect(): CssRect | null {
   const element: Element | undefined = (window as any).__hltTarget;
   if (!element?.isConnected) return null;
+  const hitRect: ((element: Element) => CssRect) | undefined = (window as any).__hltHitRect;
+  if (hitRect) return hitRect(element);
   const rect = element.getBoundingClientRect();
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
